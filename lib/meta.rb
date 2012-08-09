@@ -27,14 +27,14 @@ class Info
   MD5_SUM = "md5sum"
   NAME = "name"
   
-  attr_reader :pieces, :directory, :hash
+  attr_reader :pieces, :directory, :sha1_hash
   
   def initialize(info)
     # FIX THIS - We need the original info string from the file to hash not the hashmap
     #
     # hash is required by Trackers
     #
-    @hash = Digest::SHA1.digest(info.bencode)
+    @sha1_hash = Digest::SHA1.digest(info.bencode)
         
     @pieces = Pieces.new(info)
     
@@ -55,7 +55,7 @@ class Info
   end
   
   def to_s
-    "Info: #{hash.unpack("H*")} #{pieces} #{directory}"
+    "Info: #{sha1_hash.unpack("H*")} #{pieces} #{directory}"
   end
 end
 
