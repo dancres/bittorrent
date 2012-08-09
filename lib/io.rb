@@ -123,22 +123,12 @@ index to fill the request queue.
 
 =end
 
-class Core
-	attr_reader :selector, :serversocket
-
-	def initialize(client_details)
-		@selector = Selector.new
-		@serversocket = TCPServer.new(client_details.port)
-	end
-
-	def terminate
-	end
-end
-
+# TODO: Add server socket handling
+#
 class Selector
 	def initialize
 		@lock = Mutex.new
-		@handlers = []
+		@handlers = {}
 		@terminate = false
 		@selector_thread = Thread.new { run }
 	end
@@ -158,8 +148,10 @@ class Selector
 	end
 
 	def add(handler)
+		puts "Selector adding: #{handler}"
+
 		@lock.synchronize {
-			@handlers << handler
+			@handlers[handler.io] = handler
 		}
 	end
 
@@ -173,41 +165,53 @@ class Selector
 			discards = []
 
 			@lock.synchronize {
-				@handlers.each { |handler|
+				@handlers.values.each { |handler|
 					if (handler.interests == nil)
 						discard << handler
 					else
 						interests = handler.interests
 
 						if (interests.include?("r"))
-							readers << handler
+							readers << handler.io
 						end
 
 						if (interests.include?("w"))
-							writers << handler
+							writers << handler.io
 						end
 
 						if (interests.include?("e"))
-							errors << handler
+							errors << handler.io
 						end						
 					end
 				}
 
-				discards.each { |handler| @handlers.delete(handler)}
+				discards.each { |handler| @handlers.remove(handler.io)}
 			}
+
+			#puts "D: #{discards}"
+			#puts "R: #{readers}"
+			#puts "W: #{writers}"
+			#puts "E: #{errors}"
 
 			readers, writers, errors = IO.select(readers, writers, errors, 0.1)
 
-			readers.each { |handler| handler.read } unless (readers == nil)
+			#puts "OR: #{readers}"
+			#puts "OW: #{writers}"
+			#puts "OE: #{errors}"
 
-			writers.each { |handler| handler.write } unless (writers == nil)
+			readers.each { |io| @handlers[io].read } unless (readers == nil)
 
-			errors.each { |handler| handler.error } unless (errors == nil)
+			writers.each { |io| @handlers[io].write } unless (writers == nil)
+
+			errors.each { |io| handlers[io].error } unless (errors == nil)
 		end
 	end
 end
 
 class Handler
+	def io
+	end
+
 	# Return one or more of r, w, and e or merely d to indicate the selector
 	# should remove this instance
 	def interests
