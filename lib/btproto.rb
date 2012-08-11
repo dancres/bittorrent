@@ -26,8 +26,10 @@ class Connection < Handler
 		@state = initial_state
 		@warden = nil
 		@buffer = ""
-		@metadata = []
+		@metadata = {}
+	end
 
+	def start	
 		@lock.synchronize {
 			process(nil)
 		}
@@ -35,7 +37,7 @@ class Connection < Handler
 
 	def metadata(&block)
 		@lock.synchronize {
-			block.call(metadata)
+			block.call(@metadata)
 		}
 	end
 
@@ -52,7 +54,6 @@ class Connection < Handler
 	def process(msg)
 		case @state
 		when SEND_HANDSHAKE
-			puts "Queuing handshake[client]"
 
 			@queue.insert(
 				0, 
@@ -66,23 +67,20 @@ class Connection < Handler
 
 		when HANDSHAKE_SENT
 			handshake = Unpacker.explode_handshake(self, msg)
-			puts "Handshake received[client]: #{handshake}"	
-
 			@state = OPEN
 			@warden = OpenWarden.new
 			@interests = "r"
 
+			changed
 			notify_observers(handshake)
 
 		when OPEN
 			len = msg.slice(0, 4).unpack("N")[0]
 			id = msg.slice(4, 1).unpack("c")[0]
 
-			puts "Got a message: #{len} #{id} #{msg.unpack("H*")}"
-			
 			exploded = Unpacker.explode(self, msg)
-			puts "Unpacked: #{exploded}"
 
+			changed
 			notify_observers(exploded)
 
 		else
@@ -95,8 +93,6 @@ class Connection < Handler
 		@lock.synchronize {
 			begin
 				@buffer << @socket.read_nonblock(1520)
-
-				puts "Buffer: #{@buffer.unpack("H*")}"
 
 				consumption = @warden.consume(@buffer)
 				if (consumption != 0)
@@ -112,8 +108,6 @@ class Connection < Handler
 	def write
 		@lock.synchronize {
 			if (@queue.length != 0)
-				puts "Writing from queue"
-
 				data = @queue.pop
 
 				begin
