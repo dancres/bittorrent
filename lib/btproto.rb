@@ -1,6 +1,9 @@
 require './io.rb'
+require 'observer'
 
 class Connection < Handler
+	include Observable
+
 	# Use this state to start a server socket
 	#
 	HANDSHAKE_WAIT = -2
@@ -12,9 +15,10 @@ class Connection < Handler
 	HANDSHAKE_SENT = 2
 	OPEN = 3
 
-	def initialize(socket, initial_state, meta, core)
-		@metainfo = meta
-		@core = core
+	def initialize(socket, initial_state, hash, selector, peer_id)
+		@info_hash = hash
+		@peer_id = peer_id
+		@selector = selector
 		@lock = Mutex.new
 		@socket = socket
 		@socket.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
@@ -22,9 +26,16 @@ class Connection < Handler
 		@state = initial_state
 		@warden = nil
 		@buffer = ""
+		@metadata = []
 
 		@lock.synchronize {
 			process(nil)
+		}
+	end
+
+	def metadata(&block)
+		@lock.synchronize {
+			block.call(metadata)
 		}
 	end
 
@@ -45,20 +56,23 @@ class Connection < Handler
 
 			@queue.insert(
 				0, 
-				"\x13BitTorrent protocol\x00\x00\x00\x00\x00\x00\x00\x00#{@metainfo.info.sha1_hash}#{@core.client_details.peer_id}"
+				"\x13BitTorrent protocol\x00\x00\x00\x00\x00\x00\x00\x00#{@info_hash}#{@peer_id}"
 				)
 
 			@interests = "rw"
 			@warden = HandshakeWarden.new
 			@state = HANDSHAKE_SENT
-			@core.selector.add(self)
+			@selector.add(self)
 
 		when HANDSHAKE_SENT
-			puts "Handshake received[client]: #{Unpacker.explode_handshake(msg)}"	
+			handshake = Unpacker.explode_handshake(self, msg)
+			puts "Handshake received[client]: #{handshake}"	
 
 			@state = OPEN
 			@warden = OpenWarden.new
 			@interests = "r"
+
+			notify_observers(handshake)
 
 		when OPEN
 			len = msg.slice(0, 4).unpack("N")[0]
@@ -66,7 +80,11 @@ class Connection < Handler
 
 			puts "Got a message: #{len} #{id} #{msg.unpack("H*")}"
 			
-			puts "Unpacked: #{Unpacker.explode(msg)}"
+			exploded = Unpacker.explode(self, msg)
+			puts "Unpacked: #{exploded}"
+
+			notify_observers(exploded)
+
 		else
 			puts "Unknown state :( #{@state}"
 		end
@@ -141,11 +159,11 @@ class OpenWarden
 end
 
 class Unpacker
-	def self.explode_handshake(msg) 
-		Handshake.new(msg)
+	def self.explode_handshake(conn, msg) 
+		Handshake.new(conn, msg)
 	end
 
-	def self.explode(msg)
+	def self.explode(conn, msg)
 		len = msg.slice(0, 4).unpack("N")[0]
 
 		if (len == 0)
@@ -155,25 +173,25 @@ class Unpacker
 
 			case id
 			when 0
-				Choke.new
+				Choke.new(conn)
 			when 1
-				Unchoke.new
+				Unchoke.new(conn)
 			when 2
-				Interested.new
+				Interested.new(conn)
 			when 3
-				NotInterested.new
+				NotInterested.new(conn)
 			when 4
-				Have.new(msg.slice(5, msg.length - 5))
+				Have.new(conn, msg.slice(5, msg.length - 5))
 			when 5
-				Bitfield.new(msg.slice(5, msg.length - 5))
+				Bitfield.new(conn, msg.slice(5, msg.length - 5))
 			when 6
-				Request.new(msg.slice(5, msg.length - 5))
+				Request.new(conn, msg.slice(5, msg.length - 5))
 			when 7
-				Piece.new(msg.slice(5, msg.length - 5))
+				Piece.new(conn, msg.slice(5, msg.length - 5))
 			when 8
-				Cancel.new(msg.slice(5, msg.length - 5))
+				Cancel.new(conn, msg.slice(5, msg.length - 5))
 			when 9
-				Port.new(msg.slice(5, msg.length - 5))
+				Port.new(conn, msg.slice(5, msg.length - 5))
 			else
 				puts "Unknown message: #{id}"
 			end
@@ -182,14 +200,15 @@ class Unpacker
 end
 
 class Handshake
-	attr_reader :protocol, :extensions, :info_hash, :peer_id
+	attr_reader :protocol, :extensions, :info_hash, :peer_id, :connection
 
-	def initialize(msg)
+	def initialize(conn, msg)
 		len = msg.unpack("C")[0]
 		@protocol = msg.slice(1, len)
 		@extensions = msg.slice(1 + len, 8)
 		@info_hash = msg.slice(1 + len + 8, 20)
 		@peer_id = msg.slice(1 + len + 8 + 20, 20)
+		@connection = conn
 	end
 
 	def to_s
@@ -198,10 +217,11 @@ class Handshake
 end
 
 class KeepAlive
-	attr_reader :id
+	attr_reader :id, :connection
 
-	def initialize
+	def initialize(conn)
 		@id = -1
+		@connection = conn
 	end
 
 	def to_s
@@ -210,10 +230,11 @@ class KeepAlive
 end
 
 class Choke
-	attr_reader :id
+	attr_reader :id, :connection
 
-	def initialize
+	def initialize(conn)
 		@id = 0
+		@connection = conn
 	end
 
 	def to_s
@@ -222,10 +243,11 @@ class Choke
 end
 
 class Unchoke
-	attr_reader :id
+	attr_reader :id, :connection
 
-	def initialize
+	def initialize(conn)
 		@id = 1
+		@connection = conn
 	end
 
 	def to_s
@@ -234,10 +256,11 @@ class Unchoke
 end
 
 class Interested
-	attr_reader :id
+	attr_reader :id, :connection
 
-	def initialize
+	def initialize(conn)
 		@id = 2
+		@connection = conn
 	end
 
 	def to_s
@@ -246,10 +269,11 @@ class Interested
 end
 
 class NotInterested
-	attr_reader :id
+	attr_reader :id, :connection
 
-	def initialize
+	def initialize(conn)
 		@id = 3
+		@connection = conn
 	end
 
 	def to_s
@@ -258,11 +282,12 @@ class NotInterested
 end
 
 class Have
-	attr_reader :id, :index
+	attr_reader :id, :index, :connection
 
-	def initialize(content)
+	def initialize(conn, content)
 		@id = 4
 		@index = content.unpack("N")[0]
+		@connection = conn
 	end
 
 	def to_s
@@ -271,11 +296,12 @@ class Have
 end
 
 class Bitfield
-	attr_reader :id, :bitfield
+	attr_reader :id, :bitfield, :connection
 
-	def initialize(content)
+	def initialize(conn, content)
 		@id = 5
 		@bitfield = content
+		@connection = conn
 	end
 
 	def to_s
@@ -284,11 +310,12 @@ class Bitfield
 end
 
 class Request
-	attr_reader :id, :index, :start, :length
+	attr_reader :id, :index, :start, :length, :connection
 
-	def initialize(content)
+	def initialize(conn, content)
 		@id = 6
 		@index, @start, @length = content.unpack("N*")
+		@connection = conn
 	end
 
 	def to_s
@@ -297,12 +324,13 @@ class Request
 end
 
 class Piece
-	attr_reader :id, :index, :start, :block
+	attr_reader :id, :index, :start, :block, :connection
 
-	def initialize(content)
+	def initialize(conn, content)
 		@id = 7
 		@index, @start = content.slice(0, 8).unpack("N*")
 		@block = content.slice(8, content.length - 8)
+		@connection = conn
 	end
 
 	def to_s
@@ -311,11 +339,12 @@ class Piece
 end
 
 class Cancel
-	attr_reader :id, :index, :start, :length
+	attr_reader :id, :index, :start, :length, :connection
 
-	def initialize(content)
+	def initialize(conn, content)
 		@id = 8
 		@index, @start, @length = content.unpack("N*")
+		@connection = conn
 	end
 
 	def to_s
@@ -324,11 +353,12 @@ class Cancel
 end
 
 class Port
-	attr_reader :id, :port
+	attr_reader :id, :port, :connection
 
-	def initialize(content)
+	def initialize(conn, content)
 		@id = 9
 		@port = content.unpack("N")[0]
+		@connection = conn
 	end
 
 	def to_s
