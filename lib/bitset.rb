@@ -19,7 +19,7 @@ class Bitset
 					if ((b & mask) != 0)
 						@bits[(base + offset)] = 1
 					else
-						@bits[(base + offset)] = 0					
+						@bits[(base + offset)] = 0
 					end
 
 					offset += 1
