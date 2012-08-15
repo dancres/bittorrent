@@ -1,5 +1,5 @@
-require './tracker.rb'
-require './meta.rb'
+require_relative 'tracker.rb'
+require_relative 'meta.rb'
 
 # If our require worked, this will be available
 #

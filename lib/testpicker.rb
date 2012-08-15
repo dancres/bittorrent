@@ -1,4 +1,4 @@
-require './picker.rb'
+require_relative '../lib/picker.rb'
 require 'test/unit'
 
 class TestPicker < Test::Unit::TestCase

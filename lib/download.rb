@@ -1,7 +1,7 @@
-require './tracker.rb'
-require './meta.rb'
-require './downloader.rb'
-require './client.rb'
+require_relative 'tracker.rb'
+require_relative 'meta.rb'
+require_relative 'downloader.rb'
+require_relative 'client.rb'
 
 #m = MetaInfo.new("../metas/cluj.torrent")
 # m = MetaInfo.new("../metas/aaron.torrent")

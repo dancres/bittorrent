@@ -1,8 +1,8 @@
 require 'thread'
 require 'socket'
-require './tracker.rb'
-require './io.rb'
-require './btproto.rb'
+require_relative 'tracker.rb'
+require_relative 'selector.rb'
+require_relative 'btproto.rb'
 
 class Downloader
 

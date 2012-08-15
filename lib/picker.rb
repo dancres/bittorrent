@@ -1,4 +1,4 @@
-require './bitset.rb'
+require_relative 'bitset.rb'
 
 =begin
 

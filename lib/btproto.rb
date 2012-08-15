@@ -1,4 +1,4 @@
-require './io.rb'
+require_relative 'selector.rb'
 require 'observer'
 
 class Connection < Handler
