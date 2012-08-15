@@ -1,3 +1,4 @@
+require 'set'
 require_relative 'bitset.rb'
 
 =begin
@@ -12,7 +13,7 @@ has and what we need.
 class Picker
 	def initialize(size)
 		@piece_freq = {}
-		@booked_out = {}
+		@booked_out = Set.new
 		@size = size
 	end
 
@@ -70,14 +71,14 @@ class Picker
 		key = nil
 
 		@piece_freq.keys.each { | k |
-			if ((@piece_freq[k] < min) && (@booked_out[k] == nil) && 
+			if ((@piece_freq[k] < min) && (@booked_out.include?(k) == false) && 
 				(mask.bits[k] != 0))
 				key = k
 				min = @piece_freq[k]
 			end
 		}
 
-		@booked_out[key] = key unless (key == nil)
+		@booked_out << key unless (key == nil)
 		key
 	end
 
