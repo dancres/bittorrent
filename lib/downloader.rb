@@ -3,7 +3,6 @@ require 'socket'
 require './tracker.rb'
 require './io.rb'
 require './btproto.rb'
-require './collector.rb'
 
 class Downloader
 
@@ -81,6 +80,13 @@ connection to continue handling e.g. warden constructs.
 =end
 
 class Collector
+	MODE = 1
+	CLIENT = 2
+	PEER_CHOKED = 3
+	AM_CHOKED = 4
+	PEER_INTERESTED = 5
+	AM_INTERESTED = 6
+
 	def initialize(selector, metainfo, client_details)
 		@selector = selector
 		@metainfo = metainfo
@@ -96,7 +102,7 @@ class Collector
 			@terminate = true
 		}
 
-		@queue.enq([:poison, :exit])
+		@queue.enq(:poison)
 
 		@queue_thread.join
 	end
@@ -123,7 +129,19 @@ class Collector
 					puts "Connecting: #{message}"
 
 					socket = TCPSocket.new(message.ip, message.port)
-					Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+					conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+					conn.metadata { |meta| 
+						meta[MODE] = CLIENT
+						meta[AM_CHOKED] = true
+						meta[AM_INTERESTED] = false
+						meta[PEER_CHOKED] = true
+						meta[PEER_INTERESTED] = false
+					}
+
+					conn.add_observer(self)
+					conn.start					
+				else
+					puts "Unprocessed message: #{message}"
 				end
 			end
 		end
