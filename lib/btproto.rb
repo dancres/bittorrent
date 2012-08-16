@@ -67,7 +67,7 @@ class Connection < Handler
 
 			@queue.insert(
 				0, 
-				"\x13BitTorrent protocol\x00\x00\x00\x00\x00\x00\x00\x00#{@info_hash}#{@peer_id}"
+				Handshake.new.implode(@info_hash, @peer_id)
 				)
 
 			@interests = "rw"
@@ -115,6 +115,14 @@ class Connection < Handler
 		}
 	end
 
+	def send(message)
+		@logger.debug("Sending: #{message}")
+		@lock.synchronize {
+			@interests = "rw"
+			@queue.insert(0, message)
+		}
+	end
+
 	def read
 		@logger.debug("In read")
 		@lock.synchronize {
@@ -153,6 +161,8 @@ class Connection < Handler
 					@logger.warn("Write failed")
 					@data.insert(0)
 				end
+			else
+				@interests = "r"
 			end
 		}
 	end
@@ -184,38 +194,38 @@ end
 
 class Unpacker
 	def self.explode_handshake(conn, msg) 
-		Handshake.new(conn, msg)
+		Handshake.new.explode(conn, msg)
 	end
 
 	def self.explode(conn, msg)
 		len = msg.slice(0, 4).unpack("N")[0]
 
 		if (len == 0)
-			KeepAlive.new(conn)
+			KeepAlive.new.explode(conn)
 		else
 			id = msg.slice(4, 1).unpack("c")[0]
 
 			case id
 			when 0
-				Choke.new(conn)
+				Choke.new.explode(conn)
 			when 1
-				Unchoke.new(conn)
+				Unchoke.new.explode(conn)
 			when 2
-				Interested.new(conn)
+				Interested.new.explode(conn)
 			when 3
-				NotInterested.new(conn)
+				NotInterested.new.explode(conn)
 			when 4
-				Have.new(conn, msg.slice(5, msg.length - 5))
+				Have.new.explode(conn, msg.slice(5, msg.length - 5))
 			when 5
-				Bitfield.new(conn, msg.slice(5, msg.length - 5))
+				Bitfield.new.explode(conn, msg.slice(5, msg.length - 5))
 			when 6
-				Request.new(conn, msg.slice(5, msg.length - 5))
+				Request.new.explode(conn, msg.slice(5, msg.length - 5))
 			when 7
-				Piece.new(conn, msg.slice(5, msg.length - 5))
+				Piece.new.explode(conn, msg.slice(5, msg.length - 5))
 			when 8
-				Cancel.new(conn, msg.slice(5, msg.length - 5))
+				Cancel.new.explode(conn, msg.slice(5, msg.length - 5))
 			when 9
-				Port.new(conn, msg.slice(5, msg.length - 5))
+				Port.new.explode(conn, msg.slice(5, msg.length - 5))
 			else
 				raise ArgumentError("Unknown message: #{id}")
 			end
@@ -237,14 +247,27 @@ end
 
 class Handshake
 	attr_reader :protocol, :extensions, :info_hash, :peer_id, :connection
+	
+	def initialize
+		@len = [19]
+		@protocol = "BitTorrent protocol"
+		@extensions = "\x00\x00\x00\x00\x00\x00\x00\x00"
+	end
 
-	def initialize(conn, msg)
+	def explode(conn, msg)
 		len = msg.unpack("C")[0]
 		@protocol = msg.slice(1, len)
 		@extensions = msg.slice(1 + len, 8)
 		@info_hash = msg.slice(1 + len + 8, 20)
 		@peer_id = msg.slice(1 + len + 8 + 20, 20)
 		@connection = conn
+		self
+	end
+
+	def implode(info_hash, peer_id)
+		@info_hash = info_hash
+		@peer_id = peer_id
+		"#{@len.pack("C")}#{@protocol}#{@extensions}#{@info_hash}#{@peer_id}"		
 	end
 
 	def to_s
@@ -255,9 +278,10 @@ end
 class KeepAlive
 	attr_reader :id, :connection
 
-	def initialize(conn)
+	def explode(conn)
 		@id = -1
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -268,9 +292,10 @@ end
 class Choke
 	attr_reader :id, :connection
 
-	def initialize(conn)
+	def explode(conn)
 		@id = 0
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -281,9 +306,10 @@ end
 class Unchoke
 	attr_reader :id, :connection
 
-	def initialize(conn)
+	def explode(conn)
 		@id = 1
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -294,9 +320,10 @@ end
 class Interested
 	attr_reader :id, :connection
 
-	def initialize(conn)
+	def explode(conn)
 		@id = 2
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -307,9 +334,10 @@ end
 class NotInterested
 	attr_reader :id, :connection
 
-	def initialize(conn)
+	def explode(conn)
 		@id = 3
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -320,10 +348,11 @@ end
 class Have
 	attr_reader :id, :index, :connection
 
-	def initialize(conn, content)
+	def explode(conn, content)
 		@id = 4
 		@index = content.unpack("N")[0]
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -334,10 +363,11 @@ end
 class Bitfield
 	attr_reader :id, :bitfield, :connection
 
-	def initialize(conn, content)
+	def explode(conn, content)
 		@id = 5
 		@bitfield = content
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -348,10 +378,11 @@ end
 class Request
 	attr_reader :id, :index, :start, :length, :connection
 
-	def initialize(conn, content)
+	def explode(conn, content)
 		@id = 6
 		@index, @start, @length = content.unpack("N*")
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -362,11 +393,12 @@ end
 class Piece
 	attr_reader :id, :index, :start, :block, :connection
 
-	def initialize(conn, content)
+	def explode(conn, content)
 		@id = 7
 		@index, @start = content.slice(0, 8).unpack("N*")
 		@block = content.slice(8, content.length - 8)
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -377,10 +409,11 @@ end
 class Cancel
 	attr_reader :id, :index, :start, :length, :connection
 
-	def initialize(conn, content)
+	def explode(conn, content)
 		@id = 8
 		@index, @start, @length = content.unpack("N*")
 		@connection = conn
+		self
 	end
 
 	def to_s
@@ -391,10 +424,11 @@ end
 class Port
 	attr_reader :id, :port, :connection
 
-	def initialize(conn, content)
+	def explode(conn, content)
 		@id = 9
 		@port = content.unpack("N")[0]
 		@connection = conn
+		self
 	end
 
 	def to_s
