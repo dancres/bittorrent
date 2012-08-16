@@ -1,8 +1,11 @@
 require_relative 'selector.rb'
 require 'observer'
+require 'logger'
 
 class Connection < Handler
 	include Observable
+
+	attr_reader :state
 
 	# Use this state to start a server socket
 	#
@@ -14,6 +17,7 @@ class Connection < Handler
 	SEND_HANDSHAKE = 1
 	HANDSHAKE_SENT = 2
 	OPEN = 3
+	CLOSED = 4
 
 	def initialize(socket, initial_state, hash, selector, peer_id)
 		@info_hash = hash
@@ -27,6 +31,12 @@ class Connection < Handler
 		@warden = nil
 		@buffer = ""
 		@metadata = {}
+	    @logger = Logger.new(STDOUT)
+	    @logger.level = Logger::INFO
+	    formatter = Logger::Formatter.new
+	      @logger.formatter = proc { |severity, datetime, progname, msg|
+	        formatter.call(severity, datetime, progname, msg.dump)
+	      }		
 	end
 
 	def start	
@@ -76,20 +86,29 @@ class Connection < Handler
 
 		when OPEN
 			len = msg.slice(0, 4).unpack("N")[0]
-			id = msg.slice(4, 1).unpack("c")[0]
+
+			@logger.debug("Conn: Message arrived with length #{len}")
 
 			exploded = Unpacker.explode(self, msg)
 
 			changed
 			notify_observers(exploded)
 
+		when CLOSED
+			@logger.info("Channel closed -- cleanup #{self}")
+			@interests = nil
+			@queue = []
+			@socket.close
+
+			changed
+			notify_observers(Closed.new(self))
 		else
-			puts "Unknown state :( #{@state}"
+			@logger.error("Unknown state :( #{@state}")
 		end
 	end
 
 	def read
-		puts "In read"
+		@logger.debug("In read")
 		@lock.synchronize {
 			begin
 				@buffer << @socket.read_nonblock(1520)
@@ -100,7 +119,10 @@ class Connection < Handler
 					process(message)
 				end
 			rescue IO::WaitReadable
-				puts "Read failed"
+				@logger.warn("Read failed")
+			rescue EOFError
+				@state = CLOSED
+				process(nil)
 			end
 		}
 	end
@@ -120,7 +142,7 @@ class Connection < Handler
 				rescue IO::WaitWritable
 					# data never out the door, put it back
 					#
-					puts "Write failed"
+					@logger.warn("Write failed")
 					@data.insert(0)
 				end
 			end
@@ -161,7 +183,7 @@ class Unpacker
 		len = msg.slice(0, 4).unpack("N")[0]
 
 		if (len == 0)
-			KeepAlive.new
+			KeepAlive.new(conn)
 		else
 			id = msg.slice(4, 1).unpack("c")[0]
 
@@ -187,9 +209,21 @@ class Unpacker
 			when 9
 				Port.new(conn, msg.slice(5, msg.length - 5))
 			else
-				puts "Unknown message: #{id}"
+				raise ArgumentError("Unknown message: #{id}")
 			end
 		end
+	end
+end
+
+class Closed
+	attr_reader :connection
+
+	def initialize(conn)
+		@connection = conn
+	end
+
+	def to_s
+		"Closed: #{connection}"
 	end
 end
 
