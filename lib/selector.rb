@@ -195,22 +195,17 @@ class Selector
 				discards.each { |handler| @handlers.delete(handler.io)}
 			}
 
-			#puts "D: #{discards}"
-			#puts "R: #{readers}"
-			#puts "W: #{writers}"
-			#puts "E: #{errors}"
+			begin
+				readers, writers, errors = IO.select(readers, writers, errors, 0.1)
 
-			readers, writers, errors = IO.select(readers, writers, errors, 0.1)
+				readers.each { |io| @handlers[io].read } unless (readers == nil)
 
-			#puts "OR: #{readers}"
-			#puts "OW: #{writers}"
-			#puts "OE: #{errors}"
+				writers.each { |io| @handlers[io].write } unless (writers == nil)
 
-			readers.each { |io| @handlers[io].read } unless (readers == nil)
-
-			writers.each { |io| @handlers[io].write } unless (writers == nil)
-
-			errors.each { |io| handlers[io].error } unless (errors == nil)
+				errors.each { |io| handlers[io].error } unless (errors == nil)
+			rescue Exception => e
+				@logger.warn("Exception #{e} #{((e.backtrace != nil) && (e.backtrace.length > 0)) ? e.backtrace[0] : "no trace"}")
+  			end
 		end
 	end
 end
