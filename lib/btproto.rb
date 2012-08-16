@@ -107,6 +107,14 @@ class Connection < Handler
 		end
 	end
 
+	def close
+		@logger.debug("Closing #{self}")
+		@lock.synchronize {
+			@state = CLOSED
+			process(nil)
+		}
+	end
+
 	def read
 		@logger.debug("In read")
 		@lock.synchronize {
