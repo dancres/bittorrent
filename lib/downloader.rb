@@ -5,6 +5,7 @@ require_relative 'tracker.rb'
 require_relative 'selector.rb'
 require_relative 'btproto.rb'
 require_relative 'storage.rb'
+require_relative 'picker.rb'
 
 class Downloader
 
@@ -98,6 +99,8 @@ class Collector
 	PEER_INTERESTED = 5
 	AM_INTERESTED = 6
 	BITFIELD = 7
+	PIECE = 8
+	BLOCKS = 9
 
 	def initialize(selector, metainfo, client_details)
 		@logger = Logger.new(STDOUT)
@@ -114,6 +117,7 @@ class Collector
 		@queue = Queue.new
 		@queue_thread = Thread.new { run }
 		@storage = Storage.new(@metainfo.info.pieces.pieces.length)
+		@picker = Picker.new(@metainfo.info.pieces.pieces.length)
 	end
 
 	def wait_for_exit
@@ -182,6 +186,7 @@ class Collector
 
 					b = Bitset.new(@metainfo.info.pieces.pieces.length).from_binary(message.bitfield)
 
+					@picker.available(b)
 					conn.metadata { |meta| meta[BITFIELD] = b }
 
 					# TODO - declare interest, start sending requests if we're not choked
@@ -221,6 +226,18 @@ class Collector
 
 	def start_streaming(conn)
 		@logger.debug("Streaming requests on #{conn}")
+
+		piece = @picker.next_piece(@storage.needed, conn.metadata { |meta| meta[BITFIELD]})
+		blocks = @metainfo.info.pieces.blocks
+		@logger.debug("Selected piece: #{piece} #{blocks}")
+
+		conn.metadata { |meta|
+			meta[PIECE] = piece
+			meta[BLOCKS] = blocks
+		}
+
+		range = blocks.take(1).flatten
+		conn.send(Request.new.implode(piece, range[0], range[1]))
 	end
 
 	class Peer
