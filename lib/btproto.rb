@@ -116,7 +116,7 @@ class Connection < Handler
 	end
 
 	def send(message)
-		@logger.debug("Sending: #{message}")
+		@logger.debug("Sending: #{message.unpack("H*")}")
 		@lock.synchronize {
 			@interests = "rw"
 			@queue.insert(0, message)
@@ -147,6 +147,8 @@ class Connection < Handler
 		@lock.synchronize {
 			if (@queue.length != 0)
 				data = @queue.pop
+
+				@logger.debug("Attempting send of: #{data.unpack("H*")}")
 
 				begin
 					bytes = @socket.write_nonblock(data)
@@ -320,10 +322,17 @@ end
 class Interested
 	attr_reader :id, :connection
 
-	def explode(conn)
+	def initialize
 		@id = 2
+	end
+
+	def explode(conn)
 		@connection = conn
 		self
+	end
+
+	def implode
+		"#{[1].pack("N")}#{[@id].pack("C*")}"		
 	end
 
 	def to_s
@@ -363,11 +372,20 @@ end
 class Bitfield
 	attr_reader :id, :bitfield, :connection
 
-	def explode(conn, content)
+	def initialize
 		@id = 5
+	end
+
+	def explode(conn, content)
 		@bitfield = content
 		@connection = conn
 		self
+	end
+
+	def implode(bitset)
+		packed = bitset.to_binary
+		len = [(1 + packed.length)]
+		"#{len.pack("N")}#{[@id].pack("C*")}#{packed}"
 	end
 
 	def to_s
