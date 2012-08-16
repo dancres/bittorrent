@@ -60,6 +60,7 @@ class Info
 end
 
 class Pieces
+  BLOCK_SIZE = 16384
   PIECE_LENGTH = "piece length"
   PIECES = "pieces"
   
@@ -78,6 +79,18 @@ class Pieces
     end    
   end
   
+  def blocks
+    total = piece_length / BLOCK_SIZE
+
+    requests = (0...total).map { |b| [b * BLOCK_SIZE, BLOCK_SIZE]}
+
+    if ((piece_length % BLOCK_SIZE) != 0)
+      requests << [total * BLOCK_SIZE, piece_length % BLOCK_SIZE]
+    end
+
+    requests
+  end
+
   def dump
     pieces.each {|digest| puts digest.unpack("H*")}
     puts "Piece length: #{piece_length}"
