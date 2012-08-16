@@ -396,11 +396,18 @@ end
 class Request
 	attr_reader :id, :index, :start, :length, :connection
 
-	def explode(conn, content)
+	def initialize
 		@id = 6
+	end
+
+	def explode(conn, content)
 		@index, @start, @length = content.unpack("N*")
 		@connection = conn
 		self
+	end
+
+	def implode(index, start, length)
+		"#{[13].pack("N")}#{[@id].pack("C*")}#{[index].pack("N")}#{[start].pack("N")}#{[length].pack("N")}"
 	end
 
 	def to_s
