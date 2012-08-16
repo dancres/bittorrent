@@ -38,7 +38,7 @@ class Downloader
 				end
 			}
 
-			sleep(60)
+			collector.wait_for_exit
 		else
 			puts "Bad #{response.code}"
 			return
@@ -77,6 +77,15 @@ The connection could then be started with this meta-data and a signal for how to
 second) and it would call back with the handshake from the client at the appropriate moment. This allows
 connection to continue handling e.g. warden constructs.
 
+We'll need some timers to e.g. update Tracker. The timers gem (installed with rake install in timers dir) can do
+this but is not thread-safe. BEWARE!
+
+TODO:
+
+We should now add support for bitfields - catching others and sending ours (Have messages can maybe wait)
+We'll also need to handle choke, unchoke, interested and uninterested - catching others and sending ours
+Picking and block request streaming (which will be one piece broken into blocks per connection - use meta-data?)
+
 =end
 
 class Collector
@@ -95,6 +104,10 @@ class Collector
 		@terminate = false
 		@queue = Queue.new
 		@queue_thread = Thread.new { run }
+	end
+
+	def wait_for_exit
+		@queue_thread.join
 	end
 
 	def terminate
@@ -139,7 +152,12 @@ class Collector
 					}
 
 					conn.add_observer(self)
-					conn.start					
+					conn.start	
+
+				when Closed
+					puts "Connection closed"
+
+					# CLEANUP
 				else
 					puts "Unprocessed message: #{message}"
 				end
