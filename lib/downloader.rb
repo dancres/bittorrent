@@ -4,6 +4,7 @@ require 'logger'
 require_relative 'tracker.rb'
 require_relative 'selector.rb'
 require_relative 'btproto.rb'
+require_relative 'storage.rb'
 
 class Downloader
 
@@ -96,6 +97,7 @@ class Collector
 	AM_CHOKED = 4
 	PEER_INTERESTED = 5
 	AM_INTERESTED = 6
+	BITFIELD = 7
 
 	def initialize(selector, metainfo, client_details)
 		@logger = Logger.new(STDOUT)
@@ -111,6 +113,7 @@ class Collector
 		@terminate = false
 		@queue = Queue.new
 		@queue_thread = Thread.new { run }
+		@storage = Storage.new(@metainfo.info.pieces.pieces.length)
 	end
 
 	def wait_for_exit
@@ -160,6 +163,38 @@ class Collector
 
 					conn.add_observer(self)
 					conn.start	
+
+				when Handshake
+					conn = message.connection
+
+					if (@metainfo.info.sha1_hash == message.info_hash)
+						@logger.info("Valid #{message}")
+
+						if ((conn.metadata { |meta| meta[MODE]}) == CLIENT)
+							conn.send(Bitfield.new.implode(@storage.got))
+						end
+					else
+						@logger.warn("Invalid #{message}")
+						message.connection.close 
+					end
+
+				when Bitfield
+					conn = message.connection
+
+					b = Bitset.new(@metainfo.info.pieces.pieces.length).from_binary(message.bitfield)
+
+					conn.metadata { |meta|
+						meta[BITFIELD] = b
+					}
+
+					# TODO - declare interest, start sending requests
+					if (b.and(@storage.needed).nonZero)
+						conn.metadata { |meta|
+							meta[AM_INTERESTED] = true
+						}
+
+						conn.send(Interested.new.implode)
+					end
 
 				when KeepAlive
 					@logger.debug("#{message}")
