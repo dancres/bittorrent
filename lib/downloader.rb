@@ -101,7 +101,7 @@ class Collector
 
 	def initialize(selector, metainfo, client_details)
 		@logger = Logger.new(STDOUT)
-		@logger.level = Logger::INFO
+		@logger.level = Logger::DEBUG
 		formatter = Logger::Formatter.new
 			@logger.formatter = proc { |severity, datetime, progname, msg|
 		    	formatter.call(severity, datetime, progname, msg.dump)
@@ -145,12 +145,11 @@ class Collector
 
 		until terminate? do
 			message = @queue.deq
+			@logger.debug("Message: #{message}")
 
 			if (! terminate?)
 				case message
 				when Peer
-					@logger.info("Connecting: #{message}")
-
 					socket = TCPSocket.new(message.ip, message.port)
 					conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
 					conn.metadata { |meta| 
@@ -168,14 +167,14 @@ class Collector
 					conn = message.connection
 
 					if (@metainfo.info.sha1_hash == message.info_hash)
-						@logger.info("Valid #{message}")
+						@logger.debug("Valid #{message}")
 
 						if ((conn.metadata { |meta| meta[MODE]}) == CLIENT)
 							conn.send(Bitfield.new.implode(@storage.got))
 						end
 					else
 						@logger.warn("Invalid #{message}")
-						message.connection.close 
+						conn.close 
 					end
 
 				when Bitfield
@@ -183,24 +182,30 @@ class Collector
 
 					b = Bitset.new(@metainfo.info.pieces.pieces.length).from_binary(message.bitfield)
 
-					conn.metadata { |meta|
-						meta[BITFIELD] = b
-					}
+					conn.metadata { |meta| meta[BITFIELD] = b }
 
-					# TODO - declare interest, start sending requests
+					# TODO - declare interest, start sending requests if we're not choked
 					if (b.and(@storage.needed).nonZero)
-						conn.metadata { |meta|
-							meta[AM_INTERESTED] = true
-						}
-
+						conn.metadata { |meta| meta[AM_INTERESTED] = true }
 						conn.send(Interested.new.implode)
+
+						if (wouldSend(conn))
+							start_streaming(conn)
+						end
+					end
+
+				when Unchoke
+
+					conn = message.connection
+					conn.metadata { |meta| meta[AM_CHOKED] = false}
+
+					if (wouldSend(conn))
+						start_streaming(conn)
 					end
 
 				when KeepAlive
-					@logger.debug("#{message}")
 
 				when Closed
-					@logger.info("#{message}")
 
 					# CLEANUP
 				else
@@ -208,6 +213,14 @@ class Collector
 				end
 			end
 		end
+	end
+
+	def wouldSend(conn)
+		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED])}
+	end
+
+	def start_streaming(conn)
+		@logger.debug("Streaming requests on #{conn}")
 	end
 
 	class Peer
