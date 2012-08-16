@@ -5,24 +5,24 @@ class TestPicker < Test::Unit::TestCase
 	def test_bitmask_length
 		p = Picker.new(8)
 
-		p.available("\xff\xff")
+		p.available(Bitset.new(8).from_binary("\xff\xff"))
 		assert_equal(p.frequencies.length, 8, "Wrong number of pieces")
 
 		p = Picker.new(12)
 
-		p.available("\xff\xff")
+		p.available(Bitset.new(12).from_binary("\xff\xff"))
 		assert_equal(p.frequencies.length, 12, "Wrong number of pieces")
 	end
 
 	def test_bitmask
 		p = Picker.new(16)
 
-		p.available("\x01\x10")
+		p.available(Bitset.new(16).from_binary("\x01\x10"))
 
 		assert_equal(p.frequencies[7], 1, "Missing entry")
 		assert_equal(p.frequencies[11], 1, "Missing entry")		
 
-		p.available("\x01\x00")
+		p.available(Bitset.new(16).from_binary("\x01\x00"))
 		assert_equal(p.frequencies[7], 2, "Wrong freq")		
 		assert_equal(p.frequencies[11], 1, "Wrong freq")		
 	end
@@ -30,8 +30,8 @@ class TestPicker < Test::Unit::TestCase
 	def test_infrequent
 		p = Picker.new(16)
 
-		p.available("\x01\x10")
-		p.available("\x01\x00")
+		p.available(Bitset.new(16).from_binary("\x01\x10"))
+		p.available(Bitset.new(16).from_binary("\x01\x00"))
 
 		assert_equal(p.infrequent, 11, "Infrequent is broken")		
 	end
@@ -39,16 +39,16 @@ class TestPicker < Test::Unit::TestCase
 	def test_lost
 		p = Picker.new(16)
 
-		p.available("\x01\x10")
-		p.available("\x01\x00")
-		p.available("\x01\x10")
+		p.available(Bitset.new(16).from_binary("\x01\x10"))
+		p.available(Bitset.new(16).from_binary("\x01\x00"))
+		p.available(Bitset.new(16).from_binary("\x01\x10"))
 
 		assert_equal(p.next_piece, 11, "Available is broken (maybe next_piece)")
 
 		p.release_piece(11)
 
-		p.unavailable("\x01\x10")
-		p.unavailable("\x01\x10")
+		p.unavailable(Bitset.new(16).from_binary("\x01\x10"))
+		p.unavailable(Bitset.new(16).from_binary("\x01\x10"))
 
 		assert_equal(p.next_piece, 7, "Unavailable is broken (maybe available)")
 	end
@@ -56,8 +56,8 @@ class TestPicker < Test::Unit::TestCase
 	def test_piece_handling
 		p = Picker.new(16)
 
-		p.available("\x01\x10")
-		p.available("\x01\x00")
+		p.available(Bitset.new(16).from_binary("\x01\x10"))
+		p.available(Bitset.new(16).from_binary("\x01\x00"))
 
 		assert_equal(p.next_piece, 11, "next_piece is broken")				
 		assert_equal(p.next_piece, 7, "next_piece is broken")				
@@ -79,13 +79,13 @@ class TestPicker < Test::Unit::TestCase
 		p = Picker.new(16)
 		b = "\x01\x00"
 
-		p.available("\x01\x10")
-		p.available("\x01\x00")
+		p.available(Bitset.new(16).from_binary("\x01\x10"))
+		p.available(Bitset.new(16).from_binary("\x01\x00"))
 
 		assert_equal(p.next_piece, 11, "next_piece didn't filter on bitmap (maybe next_piece is broken)")
 		p.release_piece(11)
 
-		assert_equal(p.next_piece(nil, b), 7, "next_piece didn't filter on bitmap")		
+		assert_equal(p.next_piece(Bitset.new(16).from_binary(nil, 1), Bitset.new(16).from_binary(b, 1)), 7, "next_piece didn't filter on bitmap")		
 	end
 end
 

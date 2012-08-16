@@ -20,8 +20,7 @@ class Picker
 	# Announces to Picker the loss of an available client's bitmap
 	#
 	def unavailable(bitmap)
-		bits = Bitset.new(@size).from_binary(bitmap)
-		bits.bits.each_with_index { | b, i |
+		bitmap.bits.each_with_index { | b, i |
 			if (b == 1)
 				count = @piece_freq[i]
 				count -= 1
@@ -38,8 +37,7 @@ class Picker
 	# Announces to Picker a client's current bitmap
 	#
 	def available(bitmap)
-		bits = Bitset.new(@size).from_binary(bitmap)
-		bits.bits.each_with_index { | b, i |
+		bitmap.bits.each_with_index { | b, i |
 			if (b == 1)
 				count = @piece_freq[i]
 				if (count == nil)
@@ -62,10 +60,8 @@ class Picker
 		@piece_freq.rassoc(min)[0]
 	end
 
-	def next_piece(needed_bitset = nil, peer_bitmap = nil)
-		peermask = Bitset.new(@size).from_binary(peer_bitmap, 1)
-		neededmask = (needed_bitset == nil) ? Bitset.new(@size).fill(1) : needed_bitset
-		mask = neededmask.and(peermask)
+	def next_piece(needed_bitset = Bitset.new(@size).from_binary(nil, 1), peer_bitset = Bitset.new(@size).from_binary(nil, 1))
+		mask = needed_bitset.and(peer_bitset)
 
 		min = 2^32
 		key = nil
