@@ -43,6 +43,10 @@ class Bitset
 		bytes.pack("C*")
 	end
 
+	def invert
+		Bitset.new(@size, @bits.map { | bit | bit ^ 1})
+	end
+
 	def fill(bitvalue)
 		if (! ((bitvalue == 0) || (bitvalue == 1)))
 			raise ArgumentError.new("1 or 0 only")
@@ -60,11 +64,21 @@ class Bitset
 			raise ArgumentError.new("Bitsizes aren't the same")
 		end
 
-		result = bits.each_with_index.map { | b, i|
+		result = @bits.each_with_index.map { | b, i|
 			b & bitset.bits[i]
 		}
 
 		Bitset.new(size, result)
+	end
+
+	def nonZero
+		for i in 0...size
+			if (@bits[i] != 0)
+				return true
+			end
+		end
+
+		false
 	end
 end
 
