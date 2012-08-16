@@ -1,4 +1,5 @@
 require 'socket'
+require 'logger'
 
 =begin
 
@@ -125,12 +126,18 @@ index to fill the request queue.
 
 # TODO: Add server socket handling
 #
-class Selector
+class Selector	
 	def initialize
 		@lock = Mutex.new
 		@handlers = {}
 		@terminate = false
 		@selector_thread = Thread.new { run }
+	    @logger = Logger.new(STDOUT)
+	    @logger.level = Logger::INFO
+	    formatter = Logger::Formatter.new
+	      @logger.formatter = proc { |severity, datetime, progname, msg|
+	        formatter.call(severity, datetime, progname, msg.dump)
+	      } 		
 	end
 
 	def terminate
@@ -148,7 +155,7 @@ class Selector
 	end
 
 	def add(handler)
-		puts "Selector adding: #{handler}"
+		@logger.debug("Selector adding: #{handler}")
 
 		@lock.synchronize {
 			@handlers[handler.io] = handler
@@ -167,7 +174,7 @@ class Selector
 			@lock.synchronize {
 				@handlers.values.each { |handler|
 					if (handler.interests == nil)
-						discard << handler
+						discards << handler
 					else
 						interests = handler.interests
 
@@ -185,7 +192,7 @@ class Selector
 					end
 				}
 
-				discards.each { |handler| @handlers.remove(handler.io)}
+				discards.each { |handler| @handlers.delete(handler.io)}
 			}
 
 			#puts "D: #{discards}"
