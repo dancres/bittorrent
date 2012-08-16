@@ -31,6 +31,18 @@ class Bitset
 		self
 	end
 
+	def to_binary
+		bytes = []
+		bits = @bits.dup
+
+		while ((nxt = bits.slice!(0, 8)).length != 0)
+			nxt.fill(0, nxt.length...8)
+			bytes << nxt.inject {| byte , bit | (byte << 1) | bit}			
+		end
+
+		bytes.pack("C*")
+	end
+
 	def fill(bitvalue)
 		if (! ((bitvalue == 0) || (bitvalue == 1)))
 			raise ArgumentError.new("1 or 0 only")
