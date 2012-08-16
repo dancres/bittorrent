@@ -1,5 +1,6 @@
 require 'thread'
 require 'socket'
+require 'logger'
 require_relative 'tracker.rb'
 require_relative 'selector.rb'
 require_relative 'btproto.rb'
@@ -97,6 +98,12 @@ class Collector
 	AM_INTERESTED = 6
 
 	def initialize(selector, metainfo, client_details)
+		@logger = Logger.new(STDOUT)
+		@logger.level = Logger::INFO
+		formatter = Logger::Formatter.new
+			@logger.formatter = proc { |severity, datetime, progname, msg|
+		    	formatter.call(severity, datetime, progname, msg.dump)
+			} 				
 		@selector = selector
 		@metainfo = metainfo
 		@client_details = client_details
@@ -139,7 +146,7 @@ class Collector
 			if (! terminate?)
 				case message
 				when Peer
-					puts "Connecting: #{message}"
+					@logger.info("Connecting: #{message}")
 
 					socket = TCPSocket.new(message.ip, message.port)
 					conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
@@ -154,8 +161,11 @@ class Collector
 					conn.add_observer(self)
 					conn.start	
 
+				when KeepAlive
+					@logger.debug("#{message}")
+
 				when Closed
-					puts "Connection closed"
+					@logger.info("#{message}")
 
 					# CLEANUP
 				else
