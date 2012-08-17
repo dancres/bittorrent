@@ -321,12 +321,19 @@ end
 class Choke
 	attr_reader :id, :connection
 
-	def explode(conn)
+	def initialize
 		@id = 0
+	end
+
+	def explode(conn)
 		@connection = conn
 		self
 	end
 
+	def implode
+		"#{[1].pack("N")}#{[@id].pack("C*")}"		
+	end
+	
 	def to_s
 		"#{connection} Choke"
 	end
