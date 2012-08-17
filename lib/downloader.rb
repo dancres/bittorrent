@@ -18,36 +18,10 @@ class Downloader
 	end
 
 	def run
-		response = @tracker.ping({Tracker::UPLOADED => 0, Tracker::DOWNLOADED => 0, 
-			Tracker::LEFT => @meta.info.directory.files[0].length,
-			Tracker::EVENT => Tracker::STATUS_STARTED})
+		storage = Storage.new(@meta)
 
-		puts response
-
-		if (response.code == 200)
-			puts "Good - going to pull: #{@meta.info.sha1_hash.unpack("H*")} #{@meta.info.pieces.pieces.length} pieces of length #{@meta.info.pieces.piece_length}"
-			puts "#{@meta.info.directory}"
-
-			tr = Tracker::AnnounceResponse.new(response.body)
-
-			puts tr
-
-			collector = Collector.new(@core.scheduler, @core.selector, @core.pool, @meta, @client_details)
-
-			# Start connection for each peer that isn't us (as identified by Socket)
-			my_addresses = Socket.ip_address_list.map { |addr| addr.ip_address}
-
-			tr.peers.each { |peer|
-				if (! ((my_addresses.include?(peer.ip.ip_address) && (peer.port == @client_details.port))))
-					collector.update(Collector::Peer.new(peer.id, peer.ip.ip_address, peer.port))
-				end
-			}
-
-			collector.wait_for_exit
-		else
-			puts "Bad #{response.code}"
-			return
-		end
+		collector = Collector.new(@core.scheduler, @core.selector, @core.pool, storage, @tracker, @meta, @client_details)
+		collector.wait_for_exit
 	end	
 end
 
@@ -92,6 +66,8 @@ TODO:
 We'll also need to handle choke, unchoke, interested and uninterested - catching others and sending ours
 Choking, snubbing, keep alives etc
 Server socket handling
+Tracker updates
+Statistics
 
 =end
 
@@ -108,17 +84,21 @@ class Collector
 	TIMER = 10
 	SERVER = 11
 
-	def initialize(scheduler, selector, connection_pool, metainfo, client_details)
+	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, client_details)
 		@metainfo = metainfo
 		@scheduler = scheduler
+		@tracker_timer = nil
 		@selector = selector
+		@pool = connection_pool
 		@client_details = client_details
 		@lock = Mutex.new
-		@pool = connection_pool
 		@terminate = false
 		@queue = Queue.new
-		@storage = Storage.new(@metainfo)		
+		@storage = storage
+		@tracker = tracker
 		@picker = Picker.new(@metainfo.info.pieces.pieces.length)
+		@uploaded = 0
+		@downloaded = 0		
 		@logger = Logger.new(STDOUT)
 		@logger.level = Logger::DEBUG
 		formatter = Logger::Formatter.new
@@ -156,12 +136,48 @@ class Collector
 	def run
 		Thread.current.abort_on_exception = true
 
+		response = @tracker.ping({Tracker::UPLOADED => 0, Tracker::DOWNLOADED => 0, 
+			Tracker::LEFT => (@storage.overall_bytes - @storage.current_bytes),
+			Tracker::EVENT => Tracker::STATUS_STARTED})
+
+		puts response
+
+		if (response.code == 200)
+			puts "Good - going to pull: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}"
+			puts "#{@metainfo.info.directory}"
+
+			tr = Tracker::AnnounceResponse.new(response.body)
+
+			puts tr
+
+			# Start connection for each peer that isn't us (as identified by Socket)
+			my_addresses = Socket.ip_address_list.map { |addr| addr.ip_address}
+
+			tr.peers.each { |peer|
+				if (! ((my_addresses.include?(peer.ip.ip_address) && (peer.port == @client_details.port))))
+					update(Peer.new(peer.id, peer.ip.ip_address, peer.port))
+				end
+			}
+
+			@tracker_timer = @scheduler.add { |timers| timers.every(tr.interval) {
+				update(UpdateTracker.new)
+			}}
+
+		else
+			puts "Bad #{response.code}"
+			return
+		end
+
 		until terminate? do
 			message = @queue.deq
 			@logger.debug("Message: #{message}")
 
 			if (! terminate?)
 				case message
+				
+				when UpdateTracker
+					ping_tracker(message.status)
+
 				when Peer
 					socket = TCPSocket.new(message.ip, message.port)
 					conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
@@ -264,17 +280,33 @@ class Collector
 					conn = message.connection
 					conn.metadata { |meta| meta[PEER_INTERESTED] = false }
 
+					if (! conn.metadata { |meta| meta[PEER_CHOKED] })
+						conn.metadata { |meta| meta[PEER_CHOKED] = true }
+						conn.send(Choke.new.implode)
+					end
+
 				when Piece
 					conn = message.connection					
+					piece = conn.metadata { |meta| meta[PIECE] }
+
+					if (piece == nil)
+						@logger.warn("Unexpected piece - dropped #{conn}")
+						return
+					end
+
 					blocks = conn.metadata { |meta| meta[BLOCKS] }
 					current_block = blocks.take(1).flatten
 					remaining_blocks = blocks.drop(1)
-					piece = conn.metadata { |meta| meta[PIECE] }
 
 					@storage.save_block(piece, current_block, message.block)
+					@downloaded += message.block.length
 
 					if (remaining_blocks.length == 0)
 						@storage.piece_complete(piece)
+
+						if (@storage.complete?)
+							update(UpdateTracker.new(Tracker::STATUS_COMPLETED))
+						end
 
 						# Send out not interested to anyone that can't supply us, also update our AM_INTERESTED
 						# Send out have to any connections that are missing the piece we got
@@ -287,7 +319,7 @@ class Collector
 							# If we're interested that can only be because we've seen a HAVE or BITFIELD which means no null check
 							#
 							if (c.metadata { |meta| meta[AM_INTERESTED] })
-								if ((! outstanding.nonZero) || (! available.and(outstanding).nonZero))
+								if ((@storage.complete?) || (! available.and(outstanding).nonZero))
 									c.metadata { |meta| meta[AM_INTERESTED] = false }
 									c.send(NotInterested.new.implode)
 								end
@@ -315,6 +347,10 @@ class Collector
 						end
 					end
 
+				when Request
+
+					# TODO: Request handling - update @uploaded with number of bytes
+
 				when KeepAlive
 
 					# TODO: Ought to track connection liveness
@@ -335,6 +371,8 @@ class Collector
 				end
 			end
 		end
+
+		ping_tracker(Tracker::STATUS_STOPPED)
 	end
 
 	def clear_requests(conn)
@@ -353,10 +391,8 @@ class Collector
 	end
 
 	def start_streaming(conn)
-		@logger.debug("Streaming requests on #{conn}")
-
 		if (! wouldSend(conn))
-			@logger.debug("But we're inhibited")
+			@logger.debug("Would stream but inhibited")
 			return
 		end
 
@@ -371,6 +407,17 @@ class Collector
 
 		range = blocks.take(1).flatten
 		conn.send(Request.new.implode(piece, range[0], range[1]))
+	end
+
+	def ping_tracker(event)
+		response = @tracker.ping({Tracker::UPLOADED => @uploaded, Tracker::DOWNLOADED => @downloaded, 
+			Tracker::LEFT => (@storage.overall_bytes - @storage.current_bytes),
+			Tracker::NO_PEER_ID => "",
+			Tracker::EVENT => event})
+
+		if (response.code != 200)
+			@logger.warn("Tracker update failed: #{response}")
+		end	
 	end
 
 	class Peer
@@ -392,6 +439,14 @@ class Collector
 
 		def initialize(s)
 			@socket = s
+		end
+	end
+
+	class UpdateTracker
+		attr_reader :status
+
+		def initialize(status = Tracker::UPDATE)
+			@status = status
 		end
 	end
 end
