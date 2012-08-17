@@ -214,14 +214,7 @@ class Collector
 					conn = message.connection
 					conn.metadata { |meta| meta[AM_CHOKED] = true}
 
-					piece = conn.metadata { |meta| meta[PIECE]}
-
-					conn.metadata { |meta|
-						meta[PIECE] = nil
-						meta[BLOCKS] = nil
-					}
-
-					@picker.release(piece) unless (piece == nil)
+					clear_requests(conn)
 
 				when Unchoke
 					conn = message.connection
@@ -244,12 +237,8 @@ class Collector
 
 					if (remaining_blocks.length == 0)
 						@storage.piece_complete(piece)
-						@picker.release_piece(piece)
 
-						conn.metadata { |meta|
-							meta[PIECE] = nil
-							meta[BLOCKS] = nil
-						}
+						clear_requests(conn)
 
 						if (wouldSend(conn))
 							start_streaming(conn)
@@ -267,8 +256,11 @@ class Collector
 
 				when Closed
 					conn = message.connection
+
 					t = conn.metadata { |meta| meta[TIMER]}
 					t.cancel unless (t == nil)
+
+					@picker.unavailable(conn.metadata { |meta| meta[BITFIELD]})
 
 					# CLEANUP - Tell picker about in-flight bits gone, piece unavailability etc
 				else
@@ -276,6 +268,17 @@ class Collector
 				end
 			end
 		end
+	end
+
+	def clear_requests(conn)
+		piece = conn.metadata { |meta| meta[PIECE]}
+
+		@picker.release_piece(piece) unless (piece == nil)
+
+		conn.metadata { |meta|
+			meta[PIECE] = nil
+			meta[BLOCKS] = nil
+		}
 	end
 
 	def wouldSend(conn)
