@@ -12,7 +12,7 @@ class Tracker
   STATUS_STARTED = "started"
   STATUS_STOPPED = "stopped"
   STATUS_COMPLETED = "completed"
-  STATUS_UPDATE = "update"
+  STATUS_UPDATE = ""
 
   INFO_HASH = :info_hash
   PEER_ID = :peer_id
