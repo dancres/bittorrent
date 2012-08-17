@@ -17,6 +17,12 @@ class Storage
 		@got.invert
 	end
 
+	def save_block(piece, block, data)
+	end
+
+	def piece_complete(piece)
+		@got.set(piece)
+	end
 
 	def blocks(piece)
 		length_of_piece = (piece == (@size - 1)) ? (@overall_bytes % @piece_length) : @piece_length
