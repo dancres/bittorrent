@@ -31,7 +31,7 @@ class Tracker
     @info_hash = info_hash
     @client_details = client_details
     @logger = Logger.new(STDOUT)
-    @logger.level = Logger::INFO
+    @logger.level = Logger::WARN
     formatter = Logger::Formatter.new
       @logger.formatter = proc { |severity, datetime, progname, msg|
         formatter.call(severity, datetime, progname, msg.dump)
