@@ -3,7 +3,7 @@ require_relative 'bitset.rb'
 class Storage
 	BLOCK_SIZE = 16384
 
-	attr_reader :got
+	attr_reader :got, :overall_bytes, :current_bytes
 
 	def initialize(metainfo)
 		@metainfo = metainfo
@@ -11,13 +11,19 @@ class Storage
 		@got = Bitset.new(@size).fill(0)
 		@piece_length = metainfo.info.pieces.piece_length
 		@overall_bytes = @metainfo.info.directory.files.inject(0) { |base, f| base + f.length}
+		@current_bytes = 0
 	end
 
 	def needed
 		@got.invert
 	end
 
+	def complete?
+		return (current_bytes == overall_bytes)
+	end
+
 	def save_block(piece, block, data)
+		@current_bytes += data.length
 	end
 
 	def piece_complete(piece)
