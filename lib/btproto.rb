@@ -243,7 +243,7 @@ class Closed
 	end
 
 	def to_s
-		"Closed: #{connection}"
+		"#{connection} Closed"
 	end
 end
 
@@ -273,7 +273,7 @@ class Handshake
 	end
 
 	def to_s
-		"Handshake: #{protocol} #{extensions.unpack("B*")} #{info_hash.unpack("H*")} #{peer_id.unpack("H*")}"
+		"#{connection} Handshake: #{protocol} #{extensions.unpack("B*")} #{info_hash.unpack("H*")} #{peer_id.unpack("H*")}"
 	end
 end
 
@@ -287,7 +287,7 @@ class KeepAlive
 	end
 
 	def to_s
-		"KeepAlive"
+		"#{connection} KeepAlive"
 	end
 end
 
@@ -301,7 +301,7 @@ class Choke
 	end
 
 	def to_s
-		"Choke"
+		"#{connection} Choke"
 	end
 end
 
@@ -315,7 +315,7 @@ class Unchoke
 	end
 
 	def to_s
-		"Unchoke"
+		"#{connection} Unchoke"
 	end
 end
 
@@ -336,7 +336,7 @@ class Interested
 	end
 
 	def to_s
-		"Interested"
+		"#{connection} Interested"
 	end
 end
 
@@ -350,7 +350,7 @@ class NotInterested
 	end
 
 	def to_s
-		"NotInterested"
+		"#{connection} NotInterested"
 	end
 end
 
@@ -365,7 +365,7 @@ class Have
 	end
 
 	def to_s
-		"Have #{index}"
+		"#{connection} Have #{index}"
 	end
 end
 
@@ -389,7 +389,7 @@ class Bitfield
 	end
 
 	def to_s
-		"Bitfield: #{bitfield.unpack("B*")}"
+		"#{connection} Bitfield: #{bitfield.unpack("B*")}"
 	end
 end
 
@@ -411,7 +411,7 @@ class Request
 	end
 
 	def to_s
-		"Request: #{index} #{start} #{length}"
+		"#{connection} Request: #{index} #{start} #{length}"
 	end
 end
 
@@ -427,7 +427,7 @@ class Piece
 	end
 
 	def to_s
-		"Piece: #{index} #{start}"
+		"#{connection} Piece: #{index} #{start}"
 	end
 end
 
@@ -442,7 +442,7 @@ class Cancel
 	end
 
 	def to_s
-		"Cancel: #{index} #{start} #{length}"
+		"#{connection} Cancel: #{index} #{start} #{length}"
 	end
 end
 
@@ -457,6 +457,6 @@ class Port
 	end
 
 	def to_s
-		"Port: #{port}"
+		"#{connection} Port: #{port}"
 	end
 end
