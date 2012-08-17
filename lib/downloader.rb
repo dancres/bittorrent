@@ -32,7 +32,7 @@ class Downloader
 
 			puts tr
 
-			collector = Collector.new(@core.scheduler, @core.selector, @meta, @client_details)
+			collector = Collector.new(@core.scheduler, @core.selector, @core.pool, @meta, @client_details)
 
 			# Start connection for each peer that isn't us (as identified by Socket)
 			my_addresses = Socket.ip_address_list.map { |addr| addr.ip_address}
@@ -52,13 +52,14 @@ class Downloader
 end
 
 class Core
-	attr_reader :selector, :serversocket, :client_details, :scheduler
+	attr_reader :selector, :serversocket, :client_details, :scheduler, :pool
 
 	def initialize(client_details)
 		@selector = Selector.new
 		@client_details = client_details
 		@serversocket = TCPServer.new(client_details.port)
 		@scheduler = Scheduler.new
+		@pool = Pool.new
 	end
 
 	def terminate
@@ -105,12 +106,13 @@ class Collector
 	BLOCKS = 9
 	TIMER = 10
 
-	def initialize(scheduler, selector, metainfo, client_details)
+	def initialize(scheduler, selector, connection_pool, metainfo, client_details)
 		@metainfo = metainfo
 		@scheduler = scheduler
 		@selector = selector
 		@client_details = client_details
 		@lock = Mutex.new
+		@pool = connection_pool
 		@terminate = false
 		@queue = Queue.new
 		@storage = Storage.new(@metainfo)		
@@ -170,6 +172,7 @@ class Collector
 					}
 
 					conn.add_observer(self)
+					@pool.add(conn)
 					conn.start	
 
 				when Handshake
@@ -247,8 +250,6 @@ class Collector
 					conn = message.connection
 					conn.metadata { |meta| meta[PEER_INTERESTED] = false }
 
-				# TODO: Account for changes in interest flag and signal connections
-				#
 				when Piece
 					conn = message.connection					
 					blocks = conn.metadata { |meta| meta[BLOCKS] }
@@ -260,6 +261,32 @@ class Collector
 
 					if (remaining_blocks.length == 0)
 						@storage.piece_complete(piece)
+
+						# Send out not interested to anyone that can't supply us, also update our AM_INTERESTED
+						# Send out have to any connections that are missing the piece we got
+						#
+						outstanding = @storage.needed
+
+						@pool.each { |c| 
+							available = c.metadata { |meta| meta[BITFIELD] }
+
+							# If we're interested that can only be because we've seen a HAVE or BITFIELD which means no null check
+							#
+							if (c.metadata { |meta| meta[AM_INTERESTED] })
+								if ((! outstanding.nonZero) || (! available.and(outstanding).nonZero))
+									c.metadata { |meta| meta[AM_INTERESTED] = false }
+									c.send(NotInterested.new.implode)
+								end
+							end
+
+							# In this general case, we have no guarantee we save a HAVE or BITFIELD
+							#
+							if (available != nil)
+								if (available.get(piece) == 0)
+									c.send(Have.new.implode(piece))
+								end
+							end
+						}
 
 						clear_requests(conn)
 
@@ -280,6 +307,8 @@ class Collector
 
 				when Closed
 					conn = message.connection
+
+					@pool.remove(conn)
 
 					t = conn.metadata { |meta| meta[TIMER] }
 					t.cancel unless (t == nil)
@@ -314,11 +343,6 @@ class Collector
 
 		if (! wouldSend(conn))
 			@logger.debug("But we're inhibited")
-			return
-		end
-
-		if (! @storage.needed.nonZero)
-			@logger.debug("Storage has all pieces - no more requests")
 			return
 		end
 
