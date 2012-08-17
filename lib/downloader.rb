@@ -178,7 +178,7 @@ class Collector
 					if (@metainfo.info.sha1_hash == message.info_hash)
 						@logger.debug("Valid #{message}")
 
-						if ((conn.metadata { |meta| meta[MODE]}) == CLIENT)
+						if ((conn.metadata { |meta| meta[MODE] }) == CLIENT)
 							conn.send(Bitfield.new.implode(@storage.got))
 						end
 
@@ -186,7 +186,7 @@ class Collector
 								conn.send(KeepAlive.new.implode)
 							}}
 
-						conn.metadata { |meta| meta[TIMER] = t}
+						conn.metadata { |meta| meta[TIMER] = t }
 					else
 						@logger.warn("Invalid #{message}")
 						conn.close 
@@ -229,32 +229,32 @@ class Collector
 
 				when Choke
 					conn = message.connection
-					conn.metadata { |meta| meta[AM_CHOKED] = true}
+					conn.metadata { |meta| meta[AM_CHOKED] = true }
 
 					clear_requests(conn)
 
 				when Unchoke
 					conn = message.connection
-					conn.metadata { |meta| meta[AM_CHOKED] = false}
+					conn.metadata { |meta| meta[AM_CHOKED] = false }
 
 					start_streaming(conn)
 
 				when Interested
 					conn = message.connection
-					conn.metadata { |meta| meta[PEER_INTERESTED] = true}
+					conn.metadata { |meta| meta[PEER_INTERESTED] = true }
 
 				when NotInterested
 					conn = message.connection
-					conn.metadata { |meta| meta[PEER_INTERESTED] = false}
+					conn.metadata { |meta| meta[PEER_INTERESTED] = false }
 
 				# TODO: Account for changes in interest flag and signal connections
 				#
 				when Piece
 					conn = message.connection					
-					blocks = conn.metadata { |meta| meta[BLOCKS]}
+					blocks = conn.metadata { |meta| meta[BLOCKS] }
 					current_block = blocks.take(1).flatten
 					remaining_blocks = blocks.drop(1)
-					piece = conn.metadata { |meta| meta[PIECE]}
+					piece = conn.metadata { |meta| meta[PIECE] }
 
 					@storage.save_block(piece, current_block, message.block)
 
@@ -265,7 +265,7 @@ class Collector
 
 						start_streaming(conn)
 					else
-						conn.metadata { |meta| meta[BLOCKS] = remaining_blocks}
+						conn.metadata { |meta| meta[BLOCKS] = remaining_blocks }
 
 						if (wouldSend(conn))
 							range = remaining_blocks.take(1).flatten
@@ -281,10 +281,10 @@ class Collector
 				when Closed
 					conn = message.connection
 
-					t = conn.metadata { |meta| meta[TIMER]}
+					t = conn.metadata { |meta| meta[TIMER] }
 					t.cancel unless (t == nil)
 
-					@picker.unavailable(conn.metadata { |meta| meta[BITFIELD]})
+					@picker.unavailable(conn.metadata { |meta| meta[BITFIELD] })
 
 					# CLEANUP - Tell picker about in-flight bits gone, piece unavailability etc
 				else
@@ -295,7 +295,7 @@ class Collector
 	end
 
 	def clear_requests(conn)
-		piece = conn.metadata { |meta| meta[PIECE]}
+		piece = conn.metadata { |meta| meta[PIECE] }
 
 		@picker.release_piece(piece) unless (piece == nil)
 
@@ -306,7 +306,7 @@ class Collector
 	end
 
 	def wouldSend(conn)
-		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED])}
+		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED]) }
 	end
 
 	def start_streaming(conn)
@@ -322,7 +322,7 @@ class Collector
 			return
 		end
 
-		piece = @picker.next_piece(@storage.needed, conn.metadata { |meta| meta[BITFIELD]})
+		piece = @picker.next_piece(@storage.needed, conn.metadata { |meta| meta[BITFIELD] })
 		blocks = @storage.blocks(piece)
 		@logger.debug("Selected piece: #{piece} #{blocks}")
 
