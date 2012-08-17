@@ -5,26 +5,33 @@ class Storage
 
 	attr_reader :got
 
-	def initialize(size, piece_length)
-		@size = size
-		@got = Bitset.new(size).fill(0)
-		@piece_length = piece_length
+	def initialize(metainfo)
+		@metainfo = metainfo
+		@size = metainfo.info.pieces.pieces.length
+		@got = Bitset.new(@size).fill(0)
+		@piece_length = metainfo.info.pieces.piece_length
+		@overall_bytes = @metainfo.info.directory.files.inject(0) { |base, f| base + f.length}
 	end
 
 	def needed
 		@got.invert
 	end
 
-	def blocks
-		total = @piece_length / BLOCK_SIZE
+
+	def blocks(piece)
+		length_of_piece = (piece == (@size - 1)) ? (@overall_bytes % @piece_length) : @piece_length
+		total = length_of_piece / BLOCK_SIZE
 
 		requests = (0...total).map { |b| [b * BLOCK_SIZE, BLOCK_SIZE]}
 
-		if ((@piece_length % BLOCK_SIZE) != 0)
-			requests << [total * BLOCK_SIZE, @piece_length % BLOCK_SIZE]
+		if ((length_of_piece % BLOCK_SIZE) != 0)
+			requests << [total * BLOCK_SIZE, length_of_piece % BLOCK_SIZE]
 		end
 
 		requests
 	end
 
+	def to_s
+		"Storage: Pieces = #{@size} Piece Length: #{@piece_length} Total Bytes: #{@overall_bytes}"
+	end
 end
