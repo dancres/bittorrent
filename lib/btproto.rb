@@ -84,6 +84,27 @@ class Connection < Handler
 			changed
 			notify_observers(handshake)
 
+		when HANDSHAKE_WAIT
+			@interests = "r"
+			@warden = HandshakeWarden.new
+			@state = HANDSHAKE_RCVD
+			@selector.add(self)
+
+		when HANDSHAKE_RCVD
+			handshake = Unpacker.explode_handshake(self, msg)
+
+			@queue.insert(
+				0, 
+				Handshake.new.implode(@info_hash, @peer_id)
+				)
+
+			@state = OPEN
+			@warden = OpenWarden.new
+			@interests = "rw"
+
+			changed
+			notify_observers(handshake)			
+
 		when OPEN
 			len = msg.slice(0, 4).unpack("N")[0]
 
@@ -170,6 +191,8 @@ class Connection < Handler
 	end
 end
 
+# TODO: Need to do validation and close connection if handshake is broken
+#
 class HandshakeWarden
 	def consume(buffer)
 		desired = 1 + buffer.unpack("C*")[0] + 8 + 20 + 20

@@ -106,6 +106,7 @@ class Collector
 	PIECE = 8
 	BLOCKS = 9
 	TIMER = 10
+	SERVER = 11
 
 	def initialize(scheduler, selector, connection_pool, metainfo, client_details)
 		@metainfo = metainfo
@@ -176,15 +177,27 @@ class Collector
 					@pool.add(conn)
 					conn.start	
 
+				when Client
+					conn = Connection.new(message.socket, Connection::HANDSHAKE_WAIT, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+					conn.metadata { |meta| 
+						meta[MODE] = SERVER
+						meta[AM_CHOKED] = true
+						meta[AM_INTERESTED] = false
+						meta[PEER_CHOKED] = true
+						meta[PEER_INTERESTED] = false
+					}
+
+					conn.add_observer(self)
+					@pool.add(conn)
+					conn.start	
+
 				when Handshake
 					conn = message.connection
 
 					if (@metainfo.info.sha1_hash == message.info_hash)
 						@logger.debug("Valid #{message}")
 
-						if ((conn.metadata { |meta| meta[MODE] }) == CLIENT)
-							conn.send(Bitfield.new.implode(@storage.got))
-						end
+						conn.send(Bitfield.new.implode(@storage.got))
 
 						t = @scheduler.add { |timers| timers.every(20) {
 								conn.send(KeepAlive.new.implode)
@@ -371,6 +384,14 @@ class Collector
 
 		def to_s
 	        "Peer => #{id} #{ip} #{port}"		
+		end
+	end
+
+	class Client
+		attr_reader :socket
+
+		def initialize(s)
+			@socket = s
 		end
 	end
 end
