@@ -209,6 +209,19 @@ class Collector
 						end
 					end
 
+				when Choke
+					conn = message.connection
+					conn.metadata { |meta| meta[AM_CHOKED] = true}
+
+					piece = conn.metadata { |meta| meta[PIECE]}
+
+					conn.metadata { |meta|
+						meta[PIECE] = nil
+						meta[BLOCKS] = nil
+					}
+
+					@picker.release(piece) unless (piece == nil)
+
 				when Unchoke
 					conn = message.connection
 					conn.metadata { |meta| meta[AM_CHOKED] = false}
