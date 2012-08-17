@@ -359,7 +359,7 @@ class NotInterested
 	def implode
 		"#{[1].pack("N")}#{[@id].pack("C*")}"		
 	end
-	
+
 	def to_s
 		"#{connection} NotInterested"
 	end
@@ -368,11 +368,18 @@ end
 class Have
 	attr_reader :id, :index, :connection
 
-	def explode(conn, content)
+	def initialize
 		@id = 4
+	end
+
+	def explode(conn, content)
 		@index = content.unpack("N")[0]
 		@connection = conn
 		self
+	end
+
+	def implode(piece_index)
+		"#{[5].pack("N")}#{[@id].pack("C*")}#{[piece_index].pack("N")}"				
 	end
 
 	def to_s
