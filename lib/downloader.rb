@@ -88,10 +88,9 @@ this but is not thread-safe. BEWARE!
 
 TODO:
 
-We should now add support for bitfields - catching others and sending ours (Have messages can maybe wait)
 We'll also need to handle choke, unchoke, interested and uninterested - catching others and sending ours
-Picking and block request streaming (which will be one piece broken into blocks per connection - use meta-data?)
-Choking, keep alives etc
+Choking, snubbing, keep alives etc
+
 =end
 
 class Collector
@@ -205,9 +204,27 @@ class Collector
 						conn.metadata { |meta| meta[AM_INTERESTED] = true }
 						conn.send(Interested.new.implode)
 
-						if (wouldSend(conn))
+						start_streaming(conn)
+					end
+
+				when Have
+					conn = message.connection
+					b = conn.metadata { |meta| meta[BITFIELD] }
+
+					if (b == nil)
+						b = Bitset.new(@metainfo.info.pieces.pieces.length)
+						conn.metadata { |meta| meta[BITFIELD] = b }
+					end
+
+					b.set(message.index)
+
+					if (! metadata { |meta| meta[AM_INTERESTED] })
+						if (b.and(@storage.needed).nonZero)
+							conn.metadata { |meta| meta[AM_INTERESTED] = true }
+							conn.send(Interested.new.implode)
+
 							start_streaming(conn)
-						end
+						end						
 					end
 
 				when Choke
@@ -220,9 +237,15 @@ class Collector
 					conn = message.connection
 					conn.metadata { |meta| meta[AM_CHOKED] = false}
 
-					if (wouldSend(conn))
-						start_streaming(conn)
-					end
+					start_streaming(conn)
+
+				when Interested
+					conn = message.connection
+					conn.metadata { |meta| meta[PEER_INTERESTED] = true}
+
+				when NotInterested
+					conn = message.connection
+					conn.metadata { |meta| meta[PEER_INTERESTED] = false}
 
 				# TODO: Account for changes in interest flag and signal connections
 				#
@@ -240,9 +263,7 @@ class Collector
 
 						clear_requests(conn)
 
-						if (wouldSend(conn))
-							start_streaming(conn)
-						end
+						start_streaming(conn)
 					else
 						conn.metadata { |meta| meta[BLOCKS] = remaining_blocks}
 
@@ -252,7 +273,10 @@ class Collector
 							conn.send(Request.new.implode(piece, range[0], range[1]))
 						end
 					end
+
 				when KeepAlive
+
+					# TODO: Ought to track connection liveness
 
 				when Closed
 					conn = message.connection
@@ -287,6 +311,11 @@ class Collector
 
 	def start_streaming(conn)
 		@logger.debug("Streaming requests on #{conn}")
+
+		if (! wouldSend(conn))
+			@logger.debug("But we're inhibited")
+			return
+		end
 
 		if (! @storage.needed.nonZero)
 			@logger.debug("Storage has all pieces - no more requests")
