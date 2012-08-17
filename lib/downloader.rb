@@ -6,6 +6,7 @@ require_relative 'selector.rb'
 require_relative 'btproto.rb'
 require_relative 'storage.rb'
 require_relative 'picker.rb'
+require_relative 'util.rb'
 
 class Downloader
 
@@ -30,7 +31,7 @@ class Downloader
 
 			puts tr
 
-			collector = Collector.new(@core.selector, @meta, @client_details)
+			collector = Collector.new(@core.scheduler, @core.selector, @meta, @client_details)
 
 			# Start connection for each peer that isn't us (as identified by Socket)
 			my_addresses = Socket.ip_address_list.map { |addr| addr.ip_address}
@@ -50,12 +51,13 @@ class Downloader
 end
 
 class Core
-	attr_reader :selector, :serversocket, :client_details
+	attr_reader :selector, :serversocket, :client_details, :scheduler
 
 	def initialize(client_details)
 		@selector = Selector.new
 		@client_details = client_details
 		@serversocket = TCPServer.new(client_details.port)
+		@scheduler = Scheduler.new
 	end
 
 	def terminate
@@ -101,9 +103,11 @@ class Collector
 	BITFIELD = 7
 	PIECE = 8
 	BLOCKS = 9
+	TIMER = 10
 
-	def initialize(selector, metainfo, client_details)
+	def initialize(scheduler, selector, metainfo, client_details)
 		@metainfo = metainfo
+		@scheduler = scheduler
 		@selector = selector
 		@client_details = client_details
 		@lock = Mutex.new
@@ -177,6 +181,12 @@ class Collector
 						if ((conn.metadata { |meta| meta[MODE]}) == CLIENT)
 							conn.send(Bitfield.new.implode(@storage.got))
 						end
+
+						t = @scheduler.add { |timers| timers.every(20) {
+								conn.send(KeepAlive.new.implode)
+							}}
+
+						conn.metadata { |meta| meta[TIMER] = t}
 					else
 						@logger.warn("Invalid #{message}")
 						conn.close 
@@ -225,7 +235,10 @@ class Collector
 				when KeepAlive
 
 				when Closed
-
+					conn = message.connection
+					t = conn.metadata { |meta| meta[TIMER]}
+					t.cancel unless (t == nil)
+					
 					# CLEANUP
 				else
 					@logger.warn("Unprocessed message: #{message}")

@@ -286,6 +286,10 @@ class KeepAlive
 		self
 	end
 
+	def implode
+		"#{[0].pack("N")}"
+	end
+
 	def to_s
 		"#{connection} KeepAlive"
 	end
