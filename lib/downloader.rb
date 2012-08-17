@@ -26,6 +26,7 @@ class Downloader
 
 		if (response.code == 200)
 			puts "Good - going to pull: #{@meta.info.sha1_hash.unpack("H*")} #{@meta.info.pieces.pieces.length} pieces of length #{@meta.info.pieces.piece_length}"
+			puts "#{@meta.info.directory}"
 
 			tr = Tracker::AnnounceResponse.new(response.body)
 
@@ -113,7 +114,7 @@ class Collector
 		@lock = Mutex.new
 		@terminate = false
 		@queue = Queue.new
-		@storage = Storage.new(@metainfo.info.pieces.pieces.length, @metainfo.info.pieces.piece_length)
+		@storage = Storage.new(@metainfo)		
 		@picker = Picker.new(@metainfo.info.pieces.pieces.length)
 		@logger = Logger.new(STDOUT)
 		@logger.level = Logger::DEBUG
@@ -230,17 +231,34 @@ class Collector
 						start_streaming(conn)
 					end
 
+				# TODO: Account for changes in interest flag and signal connections
+				#
 				when Piece
-					conn = message.connection
-					blocks = conn.metadata { |meta| meta[BLOCKS]}.drop(1)
+					conn = message.connection					
+					blocks = conn.metadata { |meta| meta[BLOCKS]}
+					current_block = blocks.take(1).flatten
+					remaining_blocks = blocks.drop(1)
 					piece = conn.metadata { |meta| meta[PIECE]}
 
-					if (blocks.length == 0)
-					else
-						conn.metadata { |meta| meta[BLOCKS] = blocks}
+					@storage.save_block(piece, current_block, message.block)
+
+					if (remaining_blocks.length == 0)
+						@storage.piece_complete(piece)
+						@picker.release_piece(piece)
+
+						conn.metadata { |meta|
+							meta[PIECE] = nil
+							meta[BLOCKS] = nil
+						}
 
 						if (wouldSend(conn))
-							range = blocks.take(1).flatten
+							start_streaming(conn)
+						end
+					else
+						conn.metadata { |meta| meta[BLOCKS] = remaining_blocks}
+
+						if (wouldSend(conn))
+							range = remaining_blocks.take(1).flatten
 							@logger.debug "Next block #{piece} #{range}"
 							conn.send(Request.new.implode(piece, range[0], range[1]))
 						end
@@ -251,8 +269,8 @@ class Collector
 					conn = message.connection
 					t = conn.metadata { |meta| meta[TIMER]}
 					t.cancel unless (t == nil)
-					
-					# CLEANUP
+
+					# CLEANUP - Tell picker about in-flight bits gone, piece unavailability etc
 				else
 					@logger.warn("Unprocessed message: #{message}")
 				end
@@ -264,14 +282,16 @@ class Collector
 		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED])}
 	end
 
-	# TODO: Needs to account for resume of block requests after a choke partway through a piece download
-	# or at least when we are choked we must dump requests and restart/repeat
-	#
 	def start_streaming(conn)
 		@logger.debug("Streaming requests on #{conn}")
 
+		if (! @storage.needed.nonZero)
+			@logger.debug("Storage has all pieces - no more requests")
+			return
+		end
+
 		piece = @picker.next_piece(@storage.needed, conn.metadata { |meta| meta[BITFIELD]})
-		blocks = @storage.blocks
+		blocks = @storage.blocks(piece)
 		@logger.debug("Selected piece: #{piece} #{blocks}")
 
 		conn.metadata { |meta|
