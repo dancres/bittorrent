@@ -63,6 +63,10 @@ class Bitset
 		@bits[bit_index] = 1
 	end
 
+	def get(bit_index)
+		@bits[bit_index]
+	end	
+
 	def and(bitset)
 		if (size != bitset.size)
 			raise ArgumentError.new("Bitsizes aren't the same")
