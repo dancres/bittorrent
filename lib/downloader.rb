@@ -91,6 +91,7 @@ TODO:
 
 We'll also need to handle choke, unchoke, interested and uninterested - catching others and sending ours
 Choking, snubbing, keep alives etc
+Server socket handling
 
 =end
 
