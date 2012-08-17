@@ -82,11 +82,6 @@ class Picker
 		@booked_out.delete(key)
 	end
 
-	def finished(key)
-		@piece_freq.delete(key)
-		@booked_out.delete(key)
-	end
-
 	def frequencies
 		@piece_freq
 	end
