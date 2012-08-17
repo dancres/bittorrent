@@ -88,7 +88,7 @@ TODO:
 We should now add support for bitfields - catching others and sending ours (Have messages can maybe wait)
 We'll also need to handle choke, unchoke, interested and uninterested - catching others and sending ours
 Picking and block request streaming (which will be one piece broken into blocks per connection - use meta-data?)
-
+Choking, keep alives etc
 =end
 
 class Collector
@@ -116,7 +116,7 @@ class Collector
 		@terminate = false
 		@queue = Queue.new
 		@queue_thread = Thread.new { run }
-		@storage = Storage.new(@metainfo.info.pieces.pieces.length)
+		@storage = Storage.new(@metainfo.info.pieces.pieces.length, @metainfo.info.pieces.piece_length)
 		@picker = Picker.new(@metainfo.info.pieces.pieces.length)
 	end
 
@@ -189,7 +189,6 @@ class Collector
 					@picker.available(b)
 					conn.metadata { |meta| meta[BITFIELD] = b }
 
-					# TODO - declare interest, start sending requests if we're not choked
 					if (b.and(@storage.needed).nonZero)
 						conn.metadata { |meta| meta[AM_INTERESTED] = true }
 						conn.send(Interested.new.implode)
@@ -200,7 +199,6 @@ class Collector
 					end
 
 				when Unchoke
-
 					conn = message.connection
 					conn.metadata { |meta| meta[AM_CHOKED] = false}
 
@@ -224,11 +222,14 @@ class Collector
 		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED])}
 	end
 
+	# TODO: Needs to account for resume of block requests after a choke partway through a piece download
+	# or at least when we are choked we must dump requests and restart/repeat
+	#
 	def start_streaming(conn)
 		@logger.debug("Streaming requests on #{conn}")
 
 		piece = @picker.next_piece(@storage.needed, conn.metadata { |meta| meta[BITFIELD]})
-		blocks = @metainfo.info.pieces.blocks
+		blocks = @storage.blocks
 		@logger.debug("Selected piece: #{piece} #{blocks}")
 
 		conn.metadata { |meta|
