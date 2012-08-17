@@ -103,21 +103,22 @@ class Collector
 	BLOCKS = 9
 
 	def initialize(selector, metainfo, client_details)
-		@logger = Logger.new(STDOUT)
-		@logger.level = Logger::DEBUG
-		formatter = Logger::Formatter.new
-			@logger.formatter = proc { |severity, datetime, progname, msg|
-		    	formatter.call(severity, datetime, progname, msg.dump)
-			} 				
-		@selector = selector
 		@metainfo = metainfo
+		@selector = selector
 		@client_details = client_details
 		@lock = Mutex.new
 		@terminate = false
 		@queue = Queue.new
-		@queue_thread = Thread.new { run }
 		@storage = Storage.new(@metainfo.info.pieces.pieces.length, @metainfo.info.pieces.piece_length)
 		@picker = Picker.new(@metainfo.info.pieces.pieces.length)
+		@logger = Logger.new(STDOUT)
+		@logger.level = Logger::DEBUG
+		formatter = Logger::Formatter.new
+			@logger.formatter = proc { |severity, datetime, progname, msg|
+		    	formatter.call(severity, datetime, progname, "#{@metainfo.info.sha1_hash.unpack("H*")} #{msg.dump}")
+			}
+
+		@queue_thread = Thread.new { run }
 	end
 
 	def wait_for_exit
@@ -206,13 +207,28 @@ class Collector
 						start_streaming(conn)
 					end
 
+				when Piece
+					conn = message.connection
+					blocks = conn.metadata { |meta| meta[BLOCKS]}.drop(1)
+					piece = conn.metadata { |meta| meta[PIECE]}
+
+					if (blocks.length == 0)
+					else
+						conn.metadata { |meta| meta[BLOCKS] = blocks}
+
+						if (wouldSend(conn))
+							range = blocks.take(1).flatten
+							@logger.debug "Next block #{piece} #{range}"
+							conn.send(Request.new.implode(piece, range[0], range[1]))
+						end
+					end
 				when KeepAlive
 
 				when Closed
 
 					# CLEANUP
 				else
-					puts "Unprocessed message: #{message}"
+					@logger.warn("Unprocessed message: #{message}")
 				end
 			end
 		end
