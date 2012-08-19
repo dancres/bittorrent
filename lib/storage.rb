@@ -6,6 +6,13 @@ class Storage
 	attr_reader :got, :overall_bytes, :current_bytes, :handles
 
 	def initialize(directory, metainfo)
+	    @logger = Logger.new(STDOUT)
+	    @logger.level = Logger::DEBUG
+	    formatter = Logger::Formatter.new
+	      @logger.formatter = proc { |severity, datetime, progname, msg|
+	        formatter.call(severity, datetime, progname, msg.dump)
+	      }		
+
 		@metainfo = metainfo
 		@size = metainfo.info.pieces.pieces.length
 		@got = Bitset.new(@size).fill(0)
