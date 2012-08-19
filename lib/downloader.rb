@@ -10,17 +10,16 @@ require_relative 'util.rb'
 
 class Downloader
 
-	def initialize(metainfo, tracker, client_details)
+	def initialize(storage, metainfo, tracker, client_details)
 		@meta = metainfo
 		@tracker = tracker
 		@client_details = client_details
 		@core = Core.new(client_details)
+		@storage = storage
 	end
 
 	def run
-		storage = Storage.new(@meta)
-
-		collector = Collector.new(@core.scheduler, @core.selector, @core.pool, storage, @tracker, @meta, @client_details)
+		collector = Collector.new(@core.scheduler, @core.selector, @core.pool, @storage, @tracker, @meta, @client_details)
 		collector.wait_for_exit
 	end	
 end
@@ -67,7 +66,7 @@ We'll also need to handle choke, unchoke, interested and uninterested - catching
 Choking, snubbing, keep alives etc
 Server socket handling
 Tracker updates
-Statistics
+Statistics - per connection (state machine maintains them for upload and download bytes)
 
 =end
 
@@ -306,6 +305,9 @@ class Collector
 
 						if (@storage.complete?)
 							update(UpdateTracker.new(Tracker::STATUS_COMPLETED))
+
+							@logger.info("Closing up storage")
+							@storage.close
 						end
 
 						# Send out not interested to anyone that can't supply us, also update our AM_INTERESTED
