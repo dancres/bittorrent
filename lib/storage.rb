@@ -54,19 +54,36 @@ class Storage
 	end
 
 	def save_block(piece, block_range, data)
+		buffer = data.dup
+
 		abs_blk_pos = (piece * @piece_length) + block_range[0]
 		range = locate(abs_blk_pos)
 		file_blk_pos = abs_blk_pos - range.begin
-		bytes_to_write = [range.end + 1 - file_blk_pos, data.length].min
+		bytes_to_write = [range.end + 1 - file_blk_pos, buffer.length].min
 
-		handle = @handles[range]
+		@logger.debug "Seeking to: #{file_blk_pos} to write #{bytes_to_write} => #{abs_blk_pos} #{range}"
 
-		puts "Seeking to: #{file_blk_pos} to write #{bytes_to_write} => #{abs_blk_pos} #{range}"
+		write_block(@handles[range], file_blk_pos, buffer, bytes_to_write)
 
-		handle.seek(file_blk_pos, IO::SEEK_SET)
-		handle.write(data)
+		while (buffer.length != 0)
+			# Whatever is left will be allocated across the other files in the torrent from offset 0 in each case
+			#
+			range = locate(range.end + 1)
+			bytes_to_write = range.end - range.begin + 1
+
+			@logger.debug "Seeking to: 0 to write #{bytes_to_write} => #{range}"
+
+			write_block(@handles[range], 0, buffer, bytes_to_write)
+		end
 
 		@current_bytes += data.length
+	end
+
+	def write_block(handle, pos, buffer, num)
+		chunk = buffer.slice!(0, num)
+
+		handle.seek(pos, IO::SEEK_SET)
+		handle.write(chunk)
 	end
 
 	def piece_complete(piece)
