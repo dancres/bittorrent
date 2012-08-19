@@ -43,7 +43,7 @@ class Info
       entrys = []
       files = info[FILES]
       files.each {|file| 
-        entrys << Entry.new(file[PATH].inject("") {|base, part| "#{base}/#{part}"}, file[LENGTH], 
+        entrys << Entry.new(file[PATH].inject("") {|base, part| "#{base}#{File::SEPARATOR}#{part}"}, file[LENGTH], 
           file[MD5_SUM])
         }
       
