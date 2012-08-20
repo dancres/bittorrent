@@ -61,6 +61,8 @@ class Bitset
 
 	def set(bit_index)
 		@bits[bit_index] = 1
+		
+		self
 	end
 
 	def get(bit_index)
