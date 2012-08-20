@@ -1,4 +1,6 @@
 require_relative 'bitset.rb'
+require 'thread'
+require 'logger'
 
 class Storage
 	BLOCK_SIZE = 16384
@@ -28,6 +30,30 @@ class Storage
 			offset += f.length
 			@handles[ current..current + f.length - 1 ] = File.new("#{directory}#{File::SEPARATOR}#{f.name}", "a+b")
 		}
+
+		@lock = Mutex.new
+		@queue = Queue.new
+		@queue_thread = Thread.new { run }		
+	end
+
+	def run
+		Thread.current.abort_on_exception = true
+
+		until false do
+			message = @queue.deq
+
+			puts "Got message: #{message}"
+
+			case message
+
+			when :poison
+				return
+
+			when SaveBlock
+				save_block_impl(message.piece, message.block_range, message.data)
+
+			end			
+		end
 	end
 
 	def locate(offset)
@@ -41,19 +67,59 @@ class Storage
 	end
 
 	def close
+		@queue.enq(:poison)
+		@queue_thread.join
+
 		@handles.values.each { | f | f.close }
 		@handles = {}
 	end
 
+	def blocks(piece)
+		length_of_piece = (piece == (@size - 1)) ? (@overall_bytes % @piece_length) : @piece_length
+		total = length_of_piece / BLOCK_SIZE
+
+		requests = (0...total).map { |b| [b * BLOCK_SIZE, BLOCK_SIZE]}
+
+		if ((length_of_piece % BLOCK_SIZE) != 0)
+			requests << [total * BLOCK_SIZE, length_of_piece % BLOCK_SIZE]
+		end
+
+		requests
+	end
+
 	def needed
-		@got.invert
+		@lock.synchronize {
+			@got.invert
+		}
 	end
 
 	def complete?
-		return (current_bytes == overall_bytes)
+		@lock.synchronize {
+			return (current_bytes == overall_bytes)
+		}
+	end
+
+	def piece_complete(piece)
+		@lock.synchronize {
+			@got.set(piece)
+		}
 	end
 
 	def save_block(piece, block_range, data)
+		@queue.enq(SaveBlock.new(piece, block_range, data))
+	end
+
+	class SaveBlock
+		attr_reader :piece, :block_range, :data
+
+		def initialize(piece, block_range, data)
+			@piece = piece
+			@block_range = block_range
+			@data = data
+		end
+	end
+
+	def save_block_impl(piece, block_range, data)
 		buffer = data.dup
 
 		abs_blk_pos = (piece * @piece_length) + block_range[0]
@@ -76,7 +142,9 @@ class Storage
 			write_block(@handles[range], 0, buffer, bytes_to_write)
 		end
 
-		@current_bytes += data.length
+		@lock.synchronize {
+			@current_bytes += data.length
+		}
 	end
 
 	def write_block(handle, pos, buffer, num)
@@ -86,22 +154,7 @@ class Storage
 		handle.write(chunk)
 	end
 
-	def piece_complete(piece)
-		@got.set(piece)
-	end
-
-	def blocks(piece)
-		length_of_piece = (piece == (@size - 1)) ? (@overall_bytes % @piece_length) : @piece_length
-		total = length_of_piece / BLOCK_SIZE
-
-		requests = (0...total).map { |b| [b * BLOCK_SIZE, BLOCK_SIZE]}
-
-		if ((length_of_piece % BLOCK_SIZE) != 0)
-			requests << [total * BLOCK_SIZE, length_of_piece % BLOCK_SIZE]
-		end
-
-		requests
-	end
+	private :save_block_impl, :write_block, :locate, :run
 
 	def to_s
 		"Storage: Pieces = #{@size} Piece Length: #{@piece_length} Total Bytes: #{@overall_bytes}"
