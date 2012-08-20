@@ -148,6 +148,8 @@ class Collector
 		@metainfo = metainfo
 		@scheduler = scheduler
 		@tracker_timer = nil
+		@choke_timer = nil
+		@choker = ChokeAlgo.new
 		@selector = selector
 		@pool = connection_pool
 		@client_details = client_details
@@ -228,6 +230,10 @@ class Collector
 			return
 		end
 
+		@choke_timer = @scheduler.add { |timers| timers.every(10) {
+			update(@choker)
+			}}
+
 		until terminate? do
 			message = @queue.deq
 			@logger.debug("Message: #{message}")
@@ -235,6 +241,17 @@ class Collector
 			if (! terminate?)
 				case message
 				
+				when ChokeAlgo
+					@logger.info("Current stats: #{@downloaded}, #{@uploaded}")
+					@pool.each { |conn| 
+						up = conn.metadata { |meta| meta[UPLOADED] }
+						down = conn.metadata { |meta| meta[DOWNLOADED] }
+
+						@logger.info("Conn: #{conn}: #{down} #{up}")
+					}
+
+					@choker.run
+
 				when UpdateTracker
 					ping_tracker(message.status)
 
@@ -287,7 +304,11 @@ class Collector
 								conn.send(KeepAlive.new.implode)
 							}}
 
-						conn.metadata { |meta| meta[TIMER] = t }
+						conn.metadata { |meta| 
+							meta[TIMER] = t
+							meta[UPLOADED] = 0
+							meta[DOWNLOADED] = 0
+						}
 					else
 						@logger.warn("Invalid #{message}")
 						conn.close 
@@ -415,6 +436,10 @@ class Collector
 					@storage.save_block(piece, current_block, message.block)
 					@downloaded += message.block.length
 
+					conn.metadata { |meta|
+						meta[DOWNLOADED] += message.block.length
+					}
+
 					if (remaining_blocks.length == 0)
 						@storage.piece_complete(piece) { | success | 
 							@queue.enq(PieceCompleted.new(conn, piece, success)) }
@@ -430,7 +455,7 @@ class Collector
 
 				when Request
 
-					# TODO: Request handling - update @uploaded with number of bytes
+					# TODO: Request handling - update @uploaded with number of bytes plus connection level
 
 				when KeepAlive
 
@@ -538,6 +563,22 @@ class Collector
 			@connection = conn
 			@piece = piece
 			@success = success
+		end
+	end
+
+	class ChokeAlgo		
+		def initialize
+			@quantum = 0
+		end
+
+		def run
+			@quantum +=1
+
+			# stuff
+			if (@quantum == 3)
+				@quantum = 0
+			else
+			end
 		end
 	end
 end
