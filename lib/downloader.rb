@@ -141,6 +141,8 @@ class Collector
 	BLOCKS = 9
 	TIMER = 10
 	SERVER = 11
+	DOWNLOADED = 12
+	UPLOADED = 13
 
 	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, client_details)
 		@metainfo = metainfo
