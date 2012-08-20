@@ -353,6 +353,52 @@ class Collector
 						conn.send(Choke.new.implode)
 					end
 
+				when PieceCompleted
+					conn = message.connection
+					piece = message.piece
+
+					if (@storage.complete?)
+						update(UpdateTracker.new(Tracker::STATUS_COMPLETED))
+
+						@logger.info("Download completed")
+					end
+
+					if (message.success)
+
+						# Send out not interested to anyone that can't supply us, also update our AM_INTERESTED
+						# Send out have to any connections that are missing the piece we got
+						#
+						outstanding = @storage.needed
+
+						@pool.each { |c| 
+							available = c.metadata { |meta| meta[BITFIELD] }
+
+							# If we're interested that can only be because we've seen a HAVE or BITFIELD which means no null check
+							# of available is required.
+							#
+							if (c.metadata { |meta| meta[AM_INTERESTED] })
+								if ((@storage.complete?) || (! available.and(outstanding).nonZero))
+									c.metadata { |meta| meta[AM_INTERESTED] = false }
+									c.send(NotInterested.new.implode)
+								end
+							end
+
+							# In this general case, we have no guarantee we got a handshake on this connection.
+							#
+							if (available != nil)
+								if (available.get(piece) == 0)
+									c.send(Have.new.implode(piece))
+								end
+							end
+						}
+					else
+						@logger.warn("Failed piece #{piece} on #{conn}")
+					end
+
+					clear_requests(conn)
+
+					start_streaming(conn)
+
 				when Piece
 					conn = message.connection					
 					piece = conn.metadata { |meta| meta[PIECE] }
@@ -370,44 +416,8 @@ class Collector
 					@downloaded += message.block.length
 
 					if (remaining_blocks.length == 0)
-						@storage.piece_complete(piece)
-
-						if (@storage.complete?)
-							update(UpdateTracker.new(Tracker::STATUS_COMPLETED))
-
-							@logger.info("Closing up storage")
-							@storage.close
-						end
-
-						# Send out not interested to anyone that can't supply us, also update our AM_INTERESTED
-						# Send out have to any connections that are missing the piece we got
-						#
-						outstanding = @storage.needed
-
-						@pool.each { |c| 
-							available = c.metadata { |meta| meta[BITFIELD] }
-
-							# If we're interested that can only be because we've seen a HAVE or BITFIELD which means no null check
-							#
-							if (c.metadata { |meta| meta[AM_INTERESTED] })
-								if ((@storage.complete?) || (! available.and(outstanding).nonZero))
-									c.metadata { |meta| meta[AM_INTERESTED] = false }
-									c.send(NotInterested.new.implode)
-								end
-							end
-
-							# In this general case, we have no guarantee we save a HAVE or BITFIELD
-							#
-							if (available != nil)
-								if (available.get(piece) == 0)
-									c.send(Have.new.implode(piece))
-								end
-							end
-						}
-
-						clear_requests(conn)
-
-						start_streaming(conn)
+						@storage.piece_complete(piece) { | success | 
+							@queue.enq(PieceCompleted.new(conn, piece, success)) }
 					else
 						conn.metadata { |meta| meta[BLOCKS] = remaining_blocks }
 
@@ -436,7 +446,7 @@ class Collector
 
 					@picker.unavailable(conn.metadata { |meta| meta[BITFIELD] })
 
-					# CLEANUP - Tell picker about in-flight bits gone, piece unavailability etc
+					# TODO: CLEANUP - Tell picker about in-flight bits gone, piece unavailability etc
 				else
 					@logger.warn("Unprocessed message: #{message}")
 				end
@@ -518,6 +528,16 @@ class Collector
 
 		def initialize(status = Tracker::UPDATE)
 			@status = status
+		end
+	end
+
+	class PieceCompleted
+		attr_reader :connection, :piece, :success
+
+		def initialize(conn, piece, success)
+			@connection = conn
+			@piece = piece
+			@success = success
 		end
 	end
 end
