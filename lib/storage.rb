@@ -52,6 +52,12 @@ class Storage
 			when SaveBlock
 				save_block_impl(message.piece, message.block_range, message.data)
 
+			when VerifyPiece
+				@lock.synchronize {
+					@got.set(message.piece)
+				}
+
+				message.block.call(true)
 			end			
 		end
 	end
@@ -99,10 +105,17 @@ class Storage
 		}
 	end
 
-	def piece_complete(piece)
-		@lock.synchronize {
-			@got.set(piece)
-		}
+	def piece_complete(piece, &block)
+		@queue.enq(VerifyPiece.new(piece, block))
+	end
+
+	class VerifyPiece
+		attr_reader :piece, :block
+
+		def initialize(piece, block)
+			@piece = piece
+			@block = block
+		end
 	end
 
 	def save_block(piece, block_range, data)
