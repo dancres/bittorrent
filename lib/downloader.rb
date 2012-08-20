@@ -273,6 +273,14 @@ class Collector
 					if (@metainfo.info.sha1_hash == message.info_hash)
 						@logger.debug("Valid #{message}")
 
+						# We ought to send a have to a peer so long as there's been a handshake.
+						# We may receive a bitfield or we may never (for a base protocol client) and denying
+						# it haves would be wrong (especially as that might prompt an upload to that peer).
+						# So when we see it's handshake, we initialise it's available to the empty bitset 
+						# until we see otherwise.
+						#
+						conn.metadata { |meta| meta[BITFIELD] = Bitset.new(@metainfo.info.pieces.pieces.length).fill(0)}
+
 						conn.send(Bitfield.new.implode(@storage.got))
 
 						t = @scheduler.add { |timers| timers.every(20) {
