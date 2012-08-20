@@ -65,8 +65,67 @@ TODO:
 We'll also need to handle choke, unchoke, interested and uninterested - catching others and sending ours
 Choking, snubbing, keep alives etc
 Server socket handling
-Tracker updates
 Statistics - per connection (state machine maintains them for upload and download bytes)
+
+The choke algorithm differs in leecher and seed states. We
+describe first the choke algorithm in leecher state. At most
+4 remote peers can be unchoked and interested at the same
+time. Peers are unchoked using the following policy.
+
+1. Every 10 seconds, the interested remote peers are or-
+dered according to their download rate to the local
+peer and the 3 fastest peers are unchoked.
+2. Every 30 seconds, one additional interested remote
+peer is unchoked at random. We call this random un-
+choke the optimistic unchoke.
+
+In the following, we call the three peers unchoked in step 1
+the regular unchoked (RU) peers, and the peer unchoked in
+step 2 the optimistic unchoked (OU) peer. The optimistic
+unchoke peer selection has two purposes. It allows to evalu-
+ate the download capacity of new peers in the peer set, and
+it allows to bootstrap new peers that do not have any piece
+to share by giving them their first piece.
+
+We describe now the choke algorithm in seed state. In
+previous versions of the BitTorrent protocol, the choke algo-
+rithm was the same in leecher state and in seed state except
+that in seed state the ordering performed in step 1 was based
+on upload rates from the local peer. With this algorithm,
+peers with a high download rate are favored independently
+of their contribution to the torrent.
+
+Starting with version 4.0.0, the mainline client [2] intro-
+duced an entirely new algorithm in seed state. We are not
+aware of any documentation on this new algorithm, nor of
+any implementation of it apart from the mainline client.
+We describe this new algorithm in seed state in the follow-
+ing. At most 4 remote peers can be unchoked and interested
+at the same time. Peers are unchoked using the following
+policy.
+
+1. Every 10 seconds, the unchoked and interested remote
+peers are ordered according to the time they were last
+unchoked, most recently unchoked peers first.
+2. For two consecutive periods of 10 seconds, the 3 first
+peers are kept unchoked and an additional 4th peer
+that is choked and interested is selected at random
+and unchoked.
+3. For the third period of 10 seconds, the 4 first peers are
+kept unchoked.
+
+In the following, we call the three or four peers that are
+kept unchoked according to the time they were last unchoked
+the seed kept unchoked (SKU) peers, and the unchoked peer
+selected at random the seed random unchoked (SRU) peer.
+With this new algorithm, peers are no longer unchoked ac-
+cording to their upload rate from the local peer, but accord-
+ing to the time of their last unchoke. As a consequence, the
+peers in the active peer set are changed regularly, each new
+SRU peer taking an unchoke slot o® the oldest SKU peer.
+We show in section 4.2.1 why the new choke algorithm
+in seed state is fundamental to the fairness of the choke
+algorithm.
 
 =end
 
