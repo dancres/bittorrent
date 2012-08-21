@@ -2,6 +2,7 @@ require_relative 'bitset.rb'
 require_relative '../configure/environment.rb'
 require 'thread'
 require 'fcntl'
+require 'digest/sha1'
 
 =begin
 	TODO: Add piece verification	
@@ -40,7 +41,31 @@ class Storage
 
 		@lock = Mutex.new
 		@queue = Queue.new
+
+		update_got
+
+		STORAGE_LOGGER.debug("Got: #{@got.to_binary.unpack("H*")}")
+
 		@queue_thread = Thread.new { run }		
+	end
+
+	def update_got
+		(0...@size).each do | p |
+			digester = Digest::SHA1.new
+
+			blks = blocks(p)
+
+			while (blks.length > 0)
+				buffer = read_block_impl(p, blks.take(1).flatten)
+				digester.update(buffer)
+
+				blks = blks.drop(1)
+			end
+
+			if (digester.digest == @metainfo.info.pieces.pieces[p])
+				@got.set(p)
+			end			
+		end
 	end
 
 	def run
@@ -135,6 +160,30 @@ class Storage
 			@block_range = block_range
 			@data = data
 		end
+	end
+
+	def read_block_impl(piece, block_range)
+		abs_blk_pos = (piece * @piece_length) + block_range[0]
+		range = locate(abs_blk_pos)
+		file_blk_pos = abs_blk_pos - range.begin
+		bytes_to_read = [range.end + 1 - file_blk_pos, block_range[1]].min
+
+		STORAGE_LOGGER.debug "Seeking to: #{file_blk_pos} to read #{bytes_to_read} => #{abs_blk_pos} #{range}"
+
+		handle = @handles[range]
+		handle.seek(file_blk_pos, IO::SEEK_SET)
+		buffer = handle.read(bytes_to_read)
+
+		while (buffer.length < block_range[1])
+			range = locate(range.end + 1)
+			bytes_to_read = [range.end - range.begin + 1, buffer.length].min
+
+			handle = @handles[range]
+			handle.seek(0, IO::SEEK_SET)
+			buffer << handle.read(bytes_to_read)
+		end
+
+		buffer
 	end
 
 	def save_block_impl(piece, block_range, data)
