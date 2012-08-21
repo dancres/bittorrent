@@ -1,6 +1,7 @@
 require 'thread'
 require 'socket'
 require 'logger'
+require 'set'
 require_relative 'tracker.rb'
 require_relative 'selector.rb'
 require_relative 'btproto.rb'
@@ -67,6 +68,17 @@ Choking, snubbing, keep alives etc
 Server socket handling
 Statistics - per connection (state machine maintains them for upload and download bytes)
 
+Choke Algorithm
+===============
+
+See below for the formal description. Note that this explanation does not cover those we download
+from that are not interested. In essence, we take a max of 4 remote peers with rates faster than
+our interesteds and run them alongside the interested ones. This balances our upload and download
+bandwidth causing us to share heavily before downloading. Note also there is explanation in
+the original spec for the case where one of these uninterested peers becomes interested. All that's
+being said is that come next run of the choke, this peer is likely high enough rated that it'll bump
+off one of the others.
+
 The choke algorithm differs in leecher and seed states. We
 describe first the choke algorithm in leecher state. At most
 4 remote peers can be unchoked and interested at the same
@@ -129,6 +141,11 @@ algorithm.
 
 =end
 
+COLLECTOR_LOGGER = Logger.new(STDOUT)
+COLLECTOR_LOGGER.level = Logger::DEBUG
+CHOKER_LOGGER = Logger.new(STDOUT)
+CHOKER_LOGGER.level = Logger::INFO
+
 class Collector
 	MODE = 1
 	CLIENT = 2
@@ -149,7 +166,7 @@ class Collector
 		@scheduler = scheduler
 		@tracker_timer = nil
 		@choke_timer = nil
-		@choker = ChokeAlgo.new
+		@choker = ChokeAlgo.new(self)
 		@selector = selector
 		@pool = connection_pool
 		@client_details = client_details
@@ -161,13 +178,6 @@ class Collector
 		@picker = Picker.new(@metainfo.info.pieces.pieces.length)
 		@uploaded = 0
 		@downloaded = 0		
-		@logger = Logger.new(STDOUT)
-		@logger.level = Logger::DEBUG
-		formatter = Logger::Formatter.new
-			@logger.formatter = proc { |severity, datetime, progname, msg|
-		    	formatter.call(severity, datetime, progname, "#{@metainfo.info.sha1_hash.unpack("H*")} #{msg.dump}")
-			}
-
 		@queue_thread = Thread.new { run }
 	end
 
@@ -236,24 +246,34 @@ class Collector
 
 		until terminate? do
 			message = @queue.deq
-			@logger.debug("Message: #{message}")
+			COLLECTOR_LOGGER.debug("Message: #{message}")
 
 			if (! terminate?)
 				case message
 				
 				when ChokeAlgo
-					@logger.info("Current stats: #{@downloaded}, #{@uploaded}")
+					COLLECTOR_LOGGER.info("Current stats: #{@downloaded}, #{@uploaded}")
 					@pool.each { |conn| 
 						up = conn.metadata { |meta| meta[UPLOADED] }
 						down = conn.metadata { |meta| meta[DOWNLOADED] }
 
-						@logger.info("Conn: #{conn}: #{down} #{up}")
+						COLLECTOR_LOGGER.info("Conn: #{conn}: #{down} #{up}")
 					}
 
-					@choker.run
+					@choker.run(@pool)
 
 				when UpdateTracker
 					ping_tracker(message.status)
+
+				when ChokePeer
+					message.connection.metadata { |meta| meta[PEER_CHOKED] = true }
+					message.connection.send(Choke.new.implode)
+					clear_requests(message.connection)
+
+				when UnchokePeer
+					message.connection.metadata { |meta| meta[PEER_CHOKED] = false }
+					message.connection.send(Unchoke.new.implode)
+					start_streaming(message.connection)
 
 				when Peer
 					socket = TCPSocket.new(message.ip, message.port)
@@ -288,7 +308,7 @@ class Collector
 					conn = message.connection
 
 					if (@metainfo.info.sha1_hash == message.info_hash)
-						@logger.debug("Valid #{message}")
+						COLLECTOR_LOGGER.debug("Valid #{message}")
 
 						# We ought to send a have to a peer so long as there's been a handshake.
 						# We may receive a bitfield or we may never (for a base protocol client) and denying
@@ -310,7 +330,7 @@ class Collector
 							meta[DOWNLOADED] = 0
 						}
 					else
-						@logger.warn("Invalid #{message}")
+						COLLECTOR_LOGGER.warn("Invalid #{message}")
 						conn.close 
 					end
 
@@ -381,7 +401,7 @@ class Collector
 					if (@storage.complete?)
 						update(UpdateTracker.new(Tracker::STATUS_COMPLETED))
 
-						@logger.info("Download completed")
+						COLLECTOR_LOGGER.info("Download completed")
 					end
 
 					if (message.success)
@@ -413,7 +433,7 @@ class Collector
 							end
 						}
 					else
-						@logger.warn("Failed piece #{piece} on #{conn}")
+						COLLECTOR_LOGGER.warn("Failed piece #{piece} on #{conn}")
 					end
 
 					clear_requests(conn)
@@ -425,7 +445,7 @@ class Collector
 					piece = conn.metadata { |meta| meta[PIECE] }
 
 					if (piece == nil)
-						@logger.warn("Unexpected piece - dropped #{conn}")
+						COLLECTOR_LOGGER.warn("Unexpected piece - dropped #{conn}")
 						return
 					end
 
@@ -448,7 +468,7 @@ class Collector
 
 						if (wouldSend(conn))
 							range = remaining_blocks.take(1).flatten
-							@logger.debug "Next block #{piece} #{range}"
+							COLLECTOR_LOGGER.debug "Next block #{piece} #{range}"
 							conn.send(Request.new.implode(piece, range[0], range[1]))
 						end
 					end
@@ -473,7 +493,7 @@ class Collector
 
 					# TODO: CLEANUP - Tell picker about in-flight bits gone, piece unavailability etc
 				else
-					@logger.warn("Unprocessed message: #{message}")
+					COLLECTOR_LOGGER.warn("Unprocessed message: #{message}")
 				end
 			end
 		end
@@ -493,18 +513,21 @@ class Collector
 	end
 
 	def wouldSend(conn)
-		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED]) }
+		# TODO: Need to test for PEER_UNCHOKED - the Choking algorithm tells us who we can
+		# pull from just as it tells us who can pull from us
+		#
+		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED] && !meta[PEER_CHOKED]) }
 	end
 
 	def start_streaming(conn)
 		if (! wouldSend(conn))
-			@logger.debug("Would stream but inhibited")
+			COLLECTOR_LOGGER.debug("Would stream but inhibited")
 			return
 		end
 
 		piece = @picker.next_piece(@storage.needed, conn.metadata { |meta| meta[BITFIELD] })
 		blocks = @storage.blocks(piece)
-		@logger.debug("Selected piece: #{piece} #{blocks}")
+		COLLECTOR_LOGGER.debug("Selected piece: #{piece} #{blocks}")
 
 		conn.metadata { |meta|
 			meta[PIECE] = piece
@@ -522,7 +545,7 @@ class Collector
 			Tracker::EVENT => event})
 
 		if (response.code != 200)
-			@logger.warn("Tracker update failed: #{response}")
+			COLLECTOR_LOGGER.warn("Tracker update failed: #{response}")
 		end	
 	end
 
@@ -566,18 +589,116 @@ class Collector
 		end
 	end
 
+	class ChokePeer
+		attr_reader :connection
+
+		def initialize(conn)
+			@connection = conn
+		end
+	end
+
+	class UnchokePeer
+		attr_reader :connection
+
+		def initialize(conn)
+			@connection = conn
+		end
+	end
+
 	class ChokeAlgo		
-		def initialize
+		def initialize(collector)
+			@collector = collector
 			@quantum = 0
 		end
 
-		def run
+		def run(pool)
 			@quantum +=1
 
-			# stuff
+			rated = SortedSet.new
+			pool.each { |conn| rated << ConnectionComparator.new(conn, Collector::DOWNLOADED) }
+
+			uninterested = []
+			interested = []
+
+			rated.each { | c | 
+
+				# Once we've found our first interested, there can be no more uninterested peers
+				#
+				if (interested.length > 0)
+					if (c.connection.metadata { |meta| meta[PEER_INTERESTED] })
+						interested << c.connection
+					end
+				else
+					if (c.connection.metadata { |meta| meta[PEER_INTERESTED] })
+						interested << c.connection
+					else
+						uninterested << c.connection
+					end
+				end
+			}
+
+			CHOKER_LOGGER.debug("Rated: #{rated} Interested: #{interested} Uninterested: #{uninterested}")
+
 			if (@quantum == 3)
 				@quantum = 0
+				if (interested.length > 3)
+					interested = interested.slice!(0, 3) << interested[ Random.new.rand(interested.length) ]
+				else
+					interested = interested.slice(0, 3)
+				end
 			else
+				interested = interested.slice(0, 3)
+			end
+
+			uninterested = uninterested.slice(0, 3)
+
+			CHOKER_LOGGER.debug("Chosen - Interested: #{interested} Uninterested: #{uninterested}")
+			rated.each { | c | 
+				if ((! interested.include?(c.connection)) && (! uninterested.include?(c.connection)))
+					choke(c.connection)
+				else
+					unchoke(c.connection)
+				end
+			}
+		end
+
+		def choke(c)
+			if (! c.metadata { |meta| meta[PEER_CHOKED] })
+				CHOKER_LOGGER.debug("Choking: #{c}")
+
+				@collector.update(ChokePeer.new(c))
+			end
+		end
+
+		def unchoke(c)
+			if (c.metadata { |meta| meta[PEER_CHOKED] })
+				CHOKER_LOGGER.debug("Unchoking: #{c}")
+
+				@collector.update(UnchokePeer.new(c))
+			end
+		end
+
+		class ConnectionComparator
+			include Comparable
+
+			attr_reader :connection
+
+			def initialize(conn, field)
+				@connection = conn
+				@field = field
+			end
+
+			def <=>(another_comparator)
+				mine = connection.metadata { |meta| meta[@field] }
+				other another_comparator.connection.metadata { |meta| meta[@field] }
+
+				if (mine < other)
+					-1
+				elsif (mine > other)
+					1
+				else
+					0
+				end						
 			end
 		end
 	end
