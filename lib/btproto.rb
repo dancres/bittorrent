@@ -189,6 +189,10 @@ class Connection < Handler
 			end
 		}
 	end
+
+	def to_s
+		"Connection IH: #{@info_hash.unpack("H*")} PID: #{@peer_id.unpack("H*")}"
+	end
 end
 
 # TODO: Need to do validation and close connection if handshake is broken
