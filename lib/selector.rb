@@ -1,5 +1,5 @@
+require_relative '../configure/environment.rb'
 require 'socket'
-require 'logger'
 
 =begin
 
@@ -64,12 +64,6 @@ class Selector
 		@handlers = {}
 		@terminate = false
 		@selector_thread = Thread.new { run }
-	    @logger = Logger.new(STDOUT)
-	    @logger.level = Logger::INFO
-	    formatter = Logger::Formatter.new
-	      @logger.formatter = proc { |severity, datetime, progname, msg|
-	        formatter.call(severity, datetime, progname, msg.dump)
-	      } 		
 	end
 
 	def terminate
@@ -87,7 +81,7 @@ class Selector
 	end
 
 	def add(handler)
-		@logger.debug("Selector adding: #{handler}")
+		SELECTOR_LOGGER.debug("Selector adding: #{handler}")
 
 		@lock.synchronize {
 			@handlers[handler.io] = handler
@@ -136,7 +130,7 @@ class Selector
 
 				errors.each { |io| handlers[io].error } unless (errors == nil)
 			rescue Exception => e
-				@logger.warn("Exception #{e} #{((e.backtrace != nil) && (e.backtrace.length > 0)) ? e.backtrace[0] : "no trace"}")
+				SELECTOR_LOGGER.warn("Exception #{e} #{((e.backtrace != nil) && (e.backtrace.length > 0)) ? e.backtrace[0] : "no trace"}")
   			end
 		end
 	end

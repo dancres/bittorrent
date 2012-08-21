@@ -1,8 +1,8 @@
+require_relative '../configure/environment.rb'
 require 'cgi'
 require 'net/http'
 require 'uri'
 require 'rest_client'
-require 'logger'
 require 'bencode'
 require 'resolv'
 require 'ipaddr'
@@ -30,14 +30,7 @@ class Tracker
     @tracker = tracker
     @info_hash = info_hash
     @client_details = client_details
-    @logger = Logger.new(STDOUT)
-    @logger.level = Logger::WARN
-    formatter = Logger::Formatter.new
-      @logger.formatter = proc { |severity, datetime, progname, msg|
-        formatter.call(severity, datetime, progname, msg.dump)
-      } 
-
-    RestClient.log = @logger   
+    RestClient.log = TRACKER_LOGGER
   end  
   
   def ping(param_map)

@@ -1,6 +1,6 @@
 require_relative 'selector.rb'
+require_relative '../configure/environment.rb'
 require 'observer'
-require 'logger'
 
 class Connection < Handler
 	include Observable
@@ -31,12 +31,6 @@ class Connection < Handler
 		@warden = nil
 		@buffer = ""
 		@metadata = {}
-	    @logger = Logger.new(STDOUT)
-	    @logger.level = Logger::INFO
-	    formatter = Logger::Formatter.new
-	      @logger.formatter = proc { |severity, datetime, progname, msg|
-	        formatter.call(severity, datetime, progname, msg.dump)
-	      }		
 	end
 
 	def start	
@@ -108,7 +102,7 @@ class Connection < Handler
 		when OPEN
 			len = msg.slice(0, 4).unpack("N")[0]
 
-			@logger.debug("Conn: Message arrived with length #{len}")
+			CONNECTION_LOGGER.debug("Conn: Message arrived with length #{len}")
 
 			exploded = Unpacker.explode(self, msg)
 
@@ -116,7 +110,7 @@ class Connection < Handler
 			notify_observers(exploded)
 
 		when CLOSED
-			@logger.info("Channel closed -- cleanup #{self}")
+			CONNECTION_LOGGER.info("Channel closed -- cleanup #{self}")
 			@interests = nil
 			@queue = []
 			@socket.close
@@ -124,12 +118,12 @@ class Connection < Handler
 			changed
 			notify_observers(Closed.new(self))
 		else
-			@logger.error("Unknown state :( #{@state}")
+			CONNECTION_LOGGER.error("Unknown state :( #{@state}")
 		end
 	end
 
 	def close
-		@logger.debug("Closing #{self}")
+		CONNECTION_LOGGER.debug("Closing #{self}")
 		@lock.synchronize {
 			@state = CLOSED
 			process(nil)
@@ -137,7 +131,7 @@ class Connection < Handler
 	end
 
 	def send(message)
-		@logger.debug("Sending: #{message.unpack("H*")}")
+		CONNECTION_LOGGER.debug("Sending: #{message.unpack("H*")}")
 		@lock.synchronize {
 			@interests = "rw"
 			@queue.insert(0, message)
@@ -145,7 +139,7 @@ class Connection < Handler
 	end
 
 	def read
-		@logger.debug("In read")
+		CONNECTION_LOGGER.debug("In read")
 		@lock.synchronize {
 			begin
 				@buffer << @socket.read_nonblock(1520)
@@ -156,7 +150,7 @@ class Connection < Handler
 					process(message)
 				end
 			rescue IO::WaitReadable
-				@logger.warn("Read failed")
+				CONNECTION_LOGGER.warn("Read failed")
 			rescue EOFError
 				@state = CLOSED
 				process(nil)
@@ -169,7 +163,7 @@ class Connection < Handler
 			if (@queue.length != 0)
 				data = @queue.pop
 
-				@logger.debug("Attempting send of: #{data.unpack("H*")}")
+				CONNECTION_LOGGER.debug("Attempting send of: #{data.unpack("H*")}")
 
 				begin
 					bytes = @socket.write_nonblock(data)
@@ -181,7 +175,7 @@ class Connection < Handler
 				rescue IO::WaitWritable
 					# data never out the door, put it back
 					#
-					@logger.warn("Write failed")
+					CONNECTION_LOGGER.warn("Write failed")
 					@data.insert(0)
 				end
 			else

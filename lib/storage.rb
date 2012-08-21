@@ -1,20 +1,16 @@
 require_relative 'bitset.rb'
+require_relative '../configure/environment.rb'
 require 'thread'
-require 'logger'
 
+=begin
+	TODO: Add piece verification	
+=end
 class Storage
 	BLOCK_SIZE = 16384
 
 	attr_reader :got, :overall_bytes, :current_bytes, :handles
 
 	def initialize(directory, metainfo)
-	    @logger = Logger.new(STDOUT)
-	    @logger.level = Logger::DEBUG
-	    formatter = Logger::Formatter.new
-	      @logger.formatter = proc { |severity, datetime, progname, msg|
-	        formatter.call(severity, datetime, progname, msg.dump)
-	      }		
-
 		@metainfo = metainfo
 		@size = metainfo.info.pieces.pieces.length
 		@got = Bitset.new(@size).fill(0)
@@ -140,7 +136,7 @@ class Storage
 		file_blk_pos = abs_blk_pos - range.begin
 		bytes_to_write = [range.end + 1 - file_blk_pos, buffer.length].min
 
-		@logger.debug "Seeking to: #{file_blk_pos} to write #{bytes_to_write} => #{abs_blk_pos} #{range}"
+		STORAGE_LOGGER.debug "Seeking to: #{file_blk_pos} to write #{bytes_to_write} => #{abs_blk_pos} #{range}"
 
 		write_block(@handles[range], file_blk_pos, buffer, bytes_to_write)
 
@@ -150,7 +146,7 @@ class Storage
 			range = locate(range.end + 1)
 			bytes_to_write = range.end - range.begin + 1
 
-			@logger.debug "Seeking to: 0 to write #{bytes_to_write} => #{range}"
+			STORAGE_LOGGER.debug "Seeking to: 0 to write #{bytes_to_write} => #{range}"
 
 			write_block(@handles[range], 0, buffer, bytes_to_write)
 		end

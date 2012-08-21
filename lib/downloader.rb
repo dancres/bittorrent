@@ -1,6 +1,5 @@
 require 'thread'
 require 'socket'
-require 'logger'
 require 'set'
 require_relative 'tracker.rb'
 require_relative 'selector.rb'
@@ -8,6 +7,7 @@ require_relative 'btproto.rb'
 require_relative 'storage.rb'
 require_relative 'picker.rb'
 require_relative 'util.rb'
+require_relative '../configure/environment.rb'
 
 class Downloader
 
@@ -140,11 +140,6 @@ in seed state is fundamental to the fairness of the choke
 algorithm.
 
 =end
-
-COLLECTOR_LOGGER = Logger.new(STDOUT)
-COLLECTOR_LOGGER.level = Logger::DEBUG
-CHOKER_LOGGER = Logger.new(STDOUT)
-CHOKER_LOGGER.level = Logger::INFO
 
 class Collector
 	MODE = 1
