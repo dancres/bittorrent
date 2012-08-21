@@ -1,6 +1,7 @@
 require_relative 'bitset.rb'
 require_relative '../configure/environment.rb'
 require 'thread'
+require 'fcntl'
 
 =begin
 	TODO: Add piece verification	
@@ -24,7 +25,8 @@ class Storage
 		@metainfo.info.directory.files.each { | f |
 			current = offset
 			offset += f.length
-			@handles[ current..current + f.length - 1 ] = File.new("#{directory}#{File::SEPARATOR}#{f.name}", "a+b")
+			@handles[ current..current + f.length - 1 ] = File.new("#{directory}#{File::SEPARATOR}#{f.name}", 
+				Fcntl::O_RDWR | Fcntl::O_CREAT)
 		}
 
 		@lock = Mutex.new
