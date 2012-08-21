@@ -146,7 +146,7 @@ class Storage
 			# Whatever is left will be allocated across the other files in the torrent from offset 0 in each case
 			#
 			range = locate(range.end + 1)
-			bytes_to_write = range.end - range.begin + 1
+			bytes_to_write = [range.end - range.begin + 1, buffer.length].min
 
 			STORAGE_LOGGER.debug "Seeking to: 0 to write #{bytes_to_write} => #{range}"
 
