@@ -463,7 +463,7 @@ class Collector
 
 						if (wouldSend(conn))
 							range = remaining_blocks.take(1).flatten
-							COLLECTOR_LOGGER.debug "Next block #{piece} #{range}"
+							COLLECTOR_LOGGER.debug("Next block #{piece} #{range}")
 							conn.send(Request.new.implode(piece, range[0], range[1]))
 						end
 					end
@@ -477,6 +477,8 @@ class Collector
 					# TODO: Ought to track connection liveness
 
 				when Closed
+					COLLECTOR_LOGGER.warn("Connection closed: #{conn}")
+
 					conn = message.connection
 
 					@pool.remove(conn)
@@ -485,8 +487,8 @@ class Collector
 					t.cancel unless (t == nil)
 
 					@picker.unavailable(conn.metadata { |meta| meta[BITFIELD] })
-
-					# TODO: CLEANUP - Tell picker about in-flight bits gone, piece unavailability etc
+					clear_requests(conn)
+					
 				else
 					COLLECTOR_LOGGER.warn("Unprocessed message: #{message}")
 				end
