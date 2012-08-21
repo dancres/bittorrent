@@ -25,8 +25,17 @@ class Storage
 		@metainfo.info.directory.files.each { | f |
 			current = offset
 			offset += f.length
-			@handles[ current..current + f.length - 1 ] = File.new("#{directory}#{File::SEPARATOR}#{f.name}", 
+
+			exists = File.exists?("#{directory}#{File::SEPARATOR}#{f.name}")
+			handle = File.new("#{directory}#{File::SEPARATOR}#{f.name}", 
 				Fcntl::O_RDWR | Fcntl::O_CREAT)
+
+			# If file doesn't exist, we want to create it with the correct length
+			# this helps with piece verification and gap assessment
+			#
+			handle.seek(f.length - 1, IO::SEEK_SET)
+			handle.write("\x00")
+			@handles[ current..current + f.length - 1 ] = handle
 		}
 
 		@lock = Mutex.new
@@ -39,8 +48,6 @@ class Storage
 
 		until false do
 			message = @queue.deq
-
-			puts "Got message: #{message}"
 
 			case message
 
