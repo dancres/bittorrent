@@ -346,10 +346,17 @@ end
 class Unchoke
 	attr_reader :id, :connection
 
-	def explode(conn)
+	def initialize
 		@id = 1
+	end
+
+	def explode(conn)
 		@connection = conn
 		self
+	end
+
+	def implode
+		"#{[1].pack("N")}#{[@id].pack("C*")}"		
 	end
 
 	def to_s
