@@ -88,6 +88,9 @@ class Storage
 				}
 
 				message.block.call(true)
+
+			when ReadBlock
+				message.block.call(read_block_impl(message.piece, message.block_range))
 			end			
 		end
 	end
@@ -162,6 +165,20 @@ class Storage
 		end
 	end
 
+	def read_block(piece, block_range, &callback)
+		@queue.enq(ReadBlock.new(piece, block_range, callback))
+	end
+
+	class ReadBlock
+		attr_reader :piece, :block_range, :block
+
+		def initialize(piece, block_range, callback)
+			@piece = piece
+			@block_range = block_range
+			@block = callback
+		end
+	end
+
 	def read_block_impl(piece, block_range)
 		abs_blk_pos = (piece * @piece_length) + block_range[0]
 		range = locate(abs_blk_pos)
@@ -221,7 +238,7 @@ class Storage
 		handle.write(chunk)
 	end
 
-	private :save_block_impl, :write_block, :locate, :run
+	private :read_block_impl, :save_block_impl, :write_block, :locate, :run
 
 	def to_s
 		"Storage: Pieces = #{@size} Piece Length: #{@piece_length} Total Bytes: #{@overall_bytes}"
