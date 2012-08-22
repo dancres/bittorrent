@@ -48,7 +48,7 @@ class Storage
 
 		update_got
 
-		STORAGE_LOGGER.info("Storage has: #{@got}")
+		STORAGE_LOGGER.info("Storage has: #{@got} in bytes: #{@current_bytes} out of #{@overall_bytes}")
 
 		@queue_thread = Thread.new { run }		
 	end
@@ -57,6 +57,7 @@ class Storage
 		(0...@size).each do | p |
 			digester = Digest::SHA1.new
 
+			byte_count = 0
 			blks = blocks(p)
 
 			STORAGE_LOGGER.debug("Piece #{p} has blocks #{blks}")
@@ -68,6 +69,7 @@ class Storage
 
 				digester.update(buffer)
 
+				byte_count += blks.take(1).flatten[1]
 				blks = blks.drop(1)
 			end
 
@@ -75,6 +77,7 @@ class Storage
 
 			if (digest == @metainfo.info.pieces.pieces[p])
 				@got.set(p)
+				@current_bytes += byte_count
 			else
 				STORAGE_LOGGER.debug("Digest failed: #{digest.unpack("H*")} #{@metainfo.info.pieces.pieces[p].unpack("H*")}")
 			end			
