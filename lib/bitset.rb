@@ -81,6 +81,16 @@ class Bitset
 		Bitset.new(size, result)
 	end
 
+	def allOne
+		for i in 0...size
+			if (@bits[i] == 0)
+				return false
+			end
+		end
+
+		true
+	end
+
 	def nonZero
 		for i in 0...size
 			if (@bits[i] != 0)
