@@ -32,10 +32,14 @@ class Storage
 				Fcntl::O_RDWR | Fcntl::O_CREAT)
 
 			# If file doesn't exist, we want to create it with the correct length
-			# this helps with piece verification and gap assessment
+			# this helps with piece verification and gap assessment as we can
+			# guarantee the length of a file and the presence of bytes for blocks
 			#
-			handle.seek(f.length - 1, IO::SEEK_SET)
-			handle.write("\x00")
+			if (! exists)
+				handle.seek(f.length - 1, IO::SEEK_SET)
+				handle.write("\x00")
+			end
+			
 			@handles[ current..current + f.length - 1 ] = handle
 		}
 
@@ -44,7 +48,7 @@ class Storage
 
 		update_got
 
-		STORAGE_LOGGER.debug("Got: #{@got.to_binary.unpack("H*")}")
+		STORAGE_LOGGER.info("Storage has: #{@got}")
 
 		@queue_thread = Thread.new { run }		
 	end
@@ -55,15 +59,24 @@ class Storage
 
 			blks = blocks(p)
 
+			STORAGE_LOGGER.debug("Piece #{p} has blocks #{blks}")
+
 			while (blks.length > 0)
 				buffer = read_block_impl(p, blks.take(1).flatten)
+
+				STORAGE_LOGGER.debug("Buffer for piece is #{buffer.length} #{blks}")
+
 				digester.update(buffer)
 
 				blks = blks.drop(1)
 			end
 
-			if (digester.digest == @metainfo.info.pieces.pieces[p])
+			digest = digester.digest
+
+			if (digest == @metainfo.info.pieces.pieces[p])
 				@got.set(p)
+			else
+				STORAGE_LOGGER.debug("Digest failed: #{digest.unpack("H*")} #{@metainfo.info.pieces.pieces[p].unpack("H*")}")
 			end			
 		end
 	end
@@ -96,6 +109,8 @@ class Storage
 	end
 
 	def locate(offset)
+		STORAGE_LOGGER.debug("Locating on: #{offset}")
+
 		handles.keys.inject(nil) { | chosen, r |
 			if (r.cover?(offset))
 				r
@@ -185,7 +200,7 @@ class Storage
 		file_blk_pos = abs_blk_pos - range.begin
 		bytes_to_read = [range.end + 1 - file_blk_pos, block_range[1]].min
 
-		STORAGE_LOGGER.debug "Seeking to: #{file_blk_pos} to read #{bytes_to_read} => #{abs_blk_pos} #{range}"
+		STORAGE_LOGGER.debug "Seeking to: #{file_blk_pos} to read #{bytes_to_read} => #{abs_blk_pos} #{range} #{block_range}"
 
 		handle = @handles[range]
 		handle.seek(file_blk_pos, IO::SEEK_SET)
@@ -193,9 +208,11 @@ class Storage
 
 		while (buffer.length < block_range[1])
 			range = locate(range.end + 1)
-			bytes_to_read = [range.end - range.begin + 1, buffer.length].min
-
+			bytes_to_read = [range.end - range.begin + 1, block_range[1] - buffer.length].min
 			handle = @handles[range]
+
+			STORAGE_LOGGER.debug "Seeking to: 0 to read #{bytes_to_read} => #{abs_blk_pos} #{range} #{block_range}"
+
 			handle.seek(0, IO::SEEK_SET)
 			buffer << handle.read(bytes_to_read)
 		end
@@ -221,7 +238,7 @@ class Storage
 			range = locate(range.end + 1)
 			bytes_to_write = [range.end - range.begin + 1, buffer.length].min
 
-			STORAGE_LOGGER.debug "Seeking to: 0 to write #{bytes_to_write} => #{range}"
+			STORAGE_LOGGER.debug "Seeking to: 0 to write #{bytes_to_write} => #{abs_blk_pos} #{range}"
 
 			write_block(@handles[range], 0, buffer, bytes_to_write)
 		end
