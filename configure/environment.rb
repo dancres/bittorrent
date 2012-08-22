@@ -1,5 +1,7 @@
 require 'logger'
 
+$stdout.sync = true
+
 DEFAULT_OUTPUT = STDOUT
 
 COLLECTOR_LOGGER = Logger.new(DEFAULT_OUTPUT)
