@@ -10,8 +10,6 @@ require 'digest/sha1'
 class Storage
 	BLOCK_SIZE = 16384
 
-	attr_reader :got, :overall_bytes, :current_bytes, :handles
-
 	def initialize(directory, metainfo)
 		@metainfo = metainfo
 		@size = metainfo.info.pieces.pieces.length
@@ -39,7 +37,7 @@ class Storage
 				handle.seek(f.length - 1, IO::SEEK_SET)
 				handle.write("\x00")
 			end
-			
+
 			@handles[ current..current + f.length - 1 ] = handle
 		}
 
@@ -114,7 +112,7 @@ class Storage
 	def locate(offset)
 		STORAGE_LOGGER.debug("Locating on: #{offset}")
 
-		handles.keys.inject(nil) { | chosen, r |
+		@handles.keys.inject(nil) { | chosen, r |
 			if (r.cover?(offset))
 				r
 			else
@@ -144,6 +142,24 @@ class Storage
 		requests
 	end
 
+	def overall_bytes
+		@lock.synchronize {
+			@overall_bytes
+		}
+	end
+
+	def current_bytes
+		@lock.synchronize {
+			@current_bytes
+		}
+	end
+
+	def got
+		@lock.synchronize {
+			@got.dup
+		}
+	end
+
 	def needed
 		@lock.synchronize {
 			@got.invert
@@ -152,7 +168,7 @@ class Storage
 
 	def complete?
 		@lock.synchronize {
-			return (current_bytes == overall_bytes)
+			return (@current_bytes == @overall_bytes)
 		}
 	end
 
