@@ -255,7 +255,7 @@ class Collector
 						COLLECTOR_LOGGER.info("Conn: #{conn}: #{down} #{up}")
 					}
 
-					@choker.run(@pool)
+					@choker.run(@pool, @storage.complete?)
 
 				when UpdateTracker
 					ping_tracker(message.status)
@@ -608,11 +608,11 @@ class Collector
 			@quantum = 0
 		end
 
-		def run(pool)
+		def run(pool, complete)
 			@quantum +=1
 
 			rated = SortedSet.new
-			pool.each { |conn| rated << ConnectionComparator.new(conn, Collector::DOWNLOADED) }
+			pool.each { |conn| rated << ConnectionComparator.new(conn, (complete) ? Collector::UPLOADED : Collector::DOWNLOADED) }
 
 			uninterested = []
 			interested = []
