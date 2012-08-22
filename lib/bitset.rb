@@ -90,5 +90,9 @@ class Bitset
 
 		false
 	end
+
+	def to_s
+		"Bitset #{to_binary.unpack("B*")}"
+	end
 end
 
