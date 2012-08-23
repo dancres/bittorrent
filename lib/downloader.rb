@@ -560,14 +560,6 @@ class Collector
 		end
 	end
 
-	class Client
-		attr_reader :socket
-
-		def initialize(s)
-			@socket = s
-		end
-	end
-
 	class UpdateTracker
 		attr_reader :status
 
