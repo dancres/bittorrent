@@ -194,8 +194,7 @@ class Connection < Handler
 			begin
 				@buffer << @socket.read_nonblock(1520)
 
-				consumption = @warden.consume(@buffer)
-				if (consumption != 0)
+				while ((consumption = @warden.consume(@buffer)) != 0)
 					message = @buffer.slice!(0, consumption)
 					process(message)
 				end
@@ -243,7 +242,7 @@ end
 #
 class HandshakeWarden
 	def consume(buffer)
-		desired = 1 + buffer.unpack("C*")[0] + 8 + 20 + 20
+		desired = 1 + buffer.unpack("C")[0] + 8 + 20 + 20
 
 		if (buffer.length >= desired)
 			return desired
@@ -255,6 +254,10 @@ end
 
 class OpenWarden
 	def consume(buffer)
+		if ((buffer == nil) || (buffer.length < 4))
+			 return 0
+		end
+
 		desired = 4 + buffer.slice(0, 4).unpack("N")[0]
 
 		if (buffer.length >= desired)
