@@ -15,6 +15,7 @@ class Picker
 		@piece_freq = {}
 		@booked_out = Set.new
 		@size = size
+		(0...size).each { | p | @piece_freq[p] = 0 }
 	end
 
 	# Announces to Picker the loss of an available client's bitmap
@@ -27,11 +28,7 @@ class Picker
 				count = @piece_freq[i]
 				count -= 1
 
-				if (count == 0)
-					@piece_freq.delete(i)
-				else
-					@piece_freq[i] = count
-				end
+				@piece_freq[i] = count
 			end
 		}
 	end
@@ -44,11 +41,7 @@ class Picker
 		bitmap.bits.each_with_index { | b, i |
 			if (b == 1)
 				count = @piece_freq[i]
-				if (count == nil)
-					count = 1
-				else
-					count += 1
-				end
+				count += 1
 
 				@piece_freq[i] = count
 			end
@@ -71,7 +64,7 @@ class Picker
 		key = nil
 
 		@piece_freq.keys.each { | k |
-			if ((@piece_freq[k] < min) && (@booked_out.include?(k) == false) && 
+			if ((@piece_freq[k] < min) && (@piece_freq[k] > 0) && (@booked_out.include?(k) == false) && 
 				(mask.bits[k] != 0))
 				key = k
 				min = @piece_freq[k]
