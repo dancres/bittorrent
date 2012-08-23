@@ -368,7 +368,7 @@ class Collector
 
 					b.set(message.index)
 
-					if (! metadata { |meta| meta[AM_INTERESTED] })
+					if (! conn.metadata { |meta| meta[AM_INTERESTED] })
 						if (b.and(@storage.needed).nonZero)
 							conn.metadata { |meta| meta[AM_INTERESTED] = true }
 							conn.send(Interested.new.implode)
