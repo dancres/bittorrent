@@ -2,6 +2,56 @@ require_relative 'selector.rb'
 require_relative '../configure/environment.rb'
 require 'observer'
 
+class Acceptor < Handler
+	include Observable
+
+	def initialize(selector, server_socket)
+		@server_socket = server_socket
+		@selector = selector
+	end
+
+	def start
+		@selector.add(self)
+	end
+
+	def io
+		@server_socket
+	end
+
+	def interests
+		"re"
+	end
+
+	# TODO: Accept in a loop?
+	#
+	def read
+		CONNECTION_LOGGER.debug("In Accept")
+
+		begin
+			client_socket, client_addrinfo = @server_socket.accept_nonblock
+
+			CONNECTION_LOGGER.info("Accepting connection: #{client_socket}, #{client_addrinfo}")
+
+			changed
+			notify_observers(Client.new(client_socket))
+
+		rescue IO::WaitReadable
+			CONNECTION_LOGGER.warn("Read failed")
+		rescue EOFError
+			CONNECTION_LOGGER.warn("Server socket has died")
+		end
+	end	
+end
+
+class Client
+	attr_reader :socket
+
+	def initialize(s)
+		@socket = s
+	end
+end
+
+
 class Connection < Handler
 	include Observable
 
