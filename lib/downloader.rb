@@ -486,9 +486,11 @@ class Collector
 					t = conn.metadata { |meta| meta[TIMER] }
 					t.cancel unless (t == nil)
 
-					@picker.unavailable(conn.metadata { |meta| meta[BITFIELD] })
+					bitmap = conn.metadata { |meta| meta[BITFIELD] }
+					@picker.unavailable(bitmap) unless (bitmap == nil)
+
 					clear_requests(conn)
-					
+
 				else
 					COLLECTOR_LOGGER.warn("Unprocessed message: #{message}")
 				end
