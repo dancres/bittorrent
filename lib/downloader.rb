@@ -21,17 +21,21 @@ class Downloader
 
 	def run
 		collector = Collector.new(@core.scheduler, @core.selector, @core.pool, @storage, @tracker, @meta, @client_details)
+		@core.accept_handler.add_observer(collector)
+		@core.accept_handler.start
+
 		collector.wait_for_exit
 	end	
 end
 
 class Core
-	attr_reader :selector, :serversocket, :client_details, :scheduler, :pool
+	attr_reader :selector, :serversocket, :accept_handler, :client_details, :scheduler, :pool
 
 	def initialize(client_details)
 		@selector = Selector.new
 		@client_details = client_details
 		@serversocket = TCPServer.new(client_details.port)
+		@accept_handler = Acceptor.new(@selector, @serversocket)
 		@scheduler = Scheduler.new
 		@pool = Pool.new
 	end
