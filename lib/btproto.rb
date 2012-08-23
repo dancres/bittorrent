@@ -213,7 +213,7 @@ class Connection < Handler
 			if (@queue.length != 0)
 				data = @queue.pop
 
-				CONNECTION_LOGGER.debug("Attempting send of: #{data.unpack("H*")}")
+				CONNECTION_LOGGER.debug("Attempting send of: #{data.unpack("H*")} #{@queue.length}")
 
 				begin
 					bytes = @socket.write_nonblock(data)
@@ -235,7 +235,7 @@ class Connection < Handler
 	end
 
 	def to_s
-		"Connection IH: #{@info_hash.unpack("H*")} PID: #{@peer_id.unpack("H*")}"
+		"Ctn #{@peer_id.unpack("H*")} hash: #{@info_hash.unpack("H*")}"
 	end
 end
 
@@ -314,7 +314,7 @@ class Closed
 	end
 
 	def to_s
-		"#{connection} Closed"
+		"Closed #{connection}"
 	end
 end
 
@@ -344,7 +344,7 @@ class Handshake
 	end
 
 	def to_s
-		"#{connection} Handshake: #{protocol} #{extensions.unpack("B*")} #{info_hash.unpack("H*")} #{peer_id.unpack("H*")}"
+		"Handshake: #{protocol} #{extensions.unpack("B*")} #{info_hash.unpack("H*")} #{peer_id.unpack("H*")} #{connection}"
 	end
 end
 
@@ -362,7 +362,7 @@ class KeepAlive
 	end
 
 	def to_s
-		"#{connection} KeepAlive"
+		"KeepAlive #{connection}"
 	end
 end
 
@@ -383,7 +383,7 @@ class Choke
 	end
 	
 	def to_s
-		"#{connection} Choke"
+		"Choke #{connection}"
 	end
 end
 
@@ -404,7 +404,7 @@ class Unchoke
 	end
 
 	def to_s
-		"#{connection} Unchoke"
+		"Unchoke #{connection}"
 	end
 end
 
@@ -425,7 +425,7 @@ class Interested
 	end
 
 	def to_s
-		"#{connection} Interested"
+		"Interested #{connection}"
 	end
 end
 
@@ -446,7 +446,7 @@ class NotInterested
 	end
 
 	def to_s
-		"#{connection} NotInterested"
+		"NotInterested #{connection}"
 	end
 end
 
@@ -468,7 +468,7 @@ class Have
 	end
 
 	def to_s
-		"#{connection} Have #{index}"
+		"Have #{index} #{connection}"
 	end
 end
 
@@ -492,7 +492,7 @@ class Bitfield
 	end
 
 	def to_s
-		"#{connection} Bitfield: #{bitfield.unpack("B*")}"
+		"Bitfield: #{bitfield.unpack("B*")} #{connection}"
 	end
 end
 
@@ -514,52 +514,65 @@ class Request
 	end
 
 	def to_s
-		"#{connection} Request: #{index} #{start} #{length}"
+		"Request: #{index} #{start} #{length} #{connection}"
 	end
 end
 
 class Piece
 	attr_reader :id, :index, :start, :block, :connection
 
+	def initialize
+		@id = 7		
+	end
+
 	def explode(conn, content)
-		@id = 7
 		@index, @start = content.slice(0, 8).unpack("N*")
 		@block = content.slice(8, content.length - 8)
 		@connection = conn
 		self
 	end
 
+	def implode(piece, offset, data)
+		"#{[(9 + data.length)].pack("N")}#{[@id].pack("C*")}#{[piece].pack("N")}#{[offset].pack("N")}#{data}"
+	end
+
 	def to_s
-		"#{connection} Piece: #{index} #{start}"
+		"Piece: #{index} #{start} #{connection}"
 	end
 end
 
 class Cancel
 	attr_reader :id, :index, :start, :length, :connection
 
-	def explode(conn, content)
+	def initialize
 		@id = 8
+	end
+
+	def explode(conn, content)
 		@index, @start, @length = content.unpack("N*")
 		@connection = conn
 		self
 	end
 
 	def to_s
-		"#{connection} Cancel: #{index} #{start} #{length}"
+		"Cancel: #{index} #{start} #{length} #{connection}"
 	end
 end
 
 class Port
 	attr_reader :id, :port, :connection
 
-	def explode(conn, content)
+	def initialize
 		@id = 9
+	end
+	
+	def explode(conn, content)
 		@port = content.unpack("N")[0]
 		@connection = conn
 		self
 	end
 
 	def to_s
-		"#{connection} Port: #{port}"
+		"Port: #{port} #{connection}"
 	end
 end
