@@ -241,18 +241,27 @@ class Collector
 
 		until terminate? do
 			message = @queue.deq
-			COLLECTOR_LOGGER.debug("Message: #{message}")
+
+			case message
+			
+			when ChokeAlgo
+			
+			when KeepAlive
+
+			else
+				COLLECTOR_LOGGER.debug("Message: #{message}")
+			end
 
 			if (! terminate?)
 				case message
 				
 				when ChokeAlgo
-					COLLECTOR_LOGGER.info("Current stats: #{@downloaded}, #{@uploaded}")
+					CHOKER_LOGGER.debug("Current stats: #{@downloaded}, #{@uploaded}")
 					@pool.each { |conn| 
 						up = conn.metadata { |meta| meta[UPLOADED] }
 						down = conn.metadata { |meta| meta[DOWNLOADED] }
 
-						COLLECTOR_LOGGER.info("Conn: #{conn}: #{down} #{up}")
+						CHOKER_LOGGER.debug("Conn: #{conn}: #{down} #{up}")
 					}
 
 					@choker.run(@pool, @storage.complete?)
