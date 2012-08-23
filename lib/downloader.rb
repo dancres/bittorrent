@@ -458,30 +458,29 @@ class Collector
 
 					if (piece == nil)
 						COLLECTOR_LOGGER.warn("Unexpected piece - dropped #{conn}")
-						return
-					end
-
-					blocks = conn.metadata { |meta| meta[BLOCKS] }
-					current_block = blocks.take(1).flatten
-					remaining_blocks = blocks.drop(1)
-
-					@storage.save_block(piece, current_block, message.block)
-					@downloaded += message.block.length
-
-					conn.metadata { |meta|
-						meta[DOWNLOADED] += message.block.length
-					}
-
-					if (remaining_blocks.length == 0)
-						@storage.piece_complete(piece) { | success | 
-							@queue.enq(PieceCompleted.new(conn, piece, success)) }
 					else
-						conn.metadata { |meta| meta[BLOCKS] = remaining_blocks }
+						blocks = conn.metadata { |meta| meta[BLOCKS] }
+						current_block = blocks.take(1).flatten
+						remaining_blocks = blocks.drop(1)
 
-						if (wouldSend(conn))
-							range = remaining_blocks.take(1).flatten
-							COLLECTOR_LOGGER.debug("Next block #{piece} #{range}")
-							conn.send(Request.new.implode(piece, range[0], range[1]))
+						@storage.save_block(piece, current_block, message.block)
+						@downloaded += message.block.length
+
+						conn.metadata { |meta|
+							meta[DOWNLOADED] += message.block.length
+						}
+
+						if (remaining_blocks.length == 0)
+							@storage.piece_complete(piece) { | success | 
+								@queue.enq(PieceCompleted.new(conn, piece, success)) }
+						else
+							conn.metadata { |meta| meta[BLOCKS] = remaining_blocks }
+
+							if (wouldSend(conn))
+								range = remaining_blocks.take(1).flatten
+								COLLECTOR_LOGGER.debug("Next block #{piece} #{range}")
+								conn.send(Request.new.implode(piece, range[0], range[1]))
+							end
 						end
 					end
 
