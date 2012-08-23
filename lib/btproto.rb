@@ -81,6 +81,7 @@ class Connection < Handler
 		@warden = nil
 		@buffer = ""
 		@metadata = {}
+		@remote_peer = "Unknown"
 	end
 
 	def start	
@@ -121,6 +122,7 @@ class Connection < Handler
 
 		when HANDSHAKE_SENT
 			handshake = Unpacker.explode_handshake(self, msg)
+			@remote_peer = handshake.peer_id
 			@state = OPEN
 			@warden = OpenWarden.new
 			@interests = "r"
@@ -142,6 +144,7 @@ class Connection < Handler
 				Handshake.new.implode(@info_hash, @peer_id)
 				)
 
+			@remote_peer = handshake.peer_id
 			@state = OPEN
 			@warden = OpenWarden.new
 			@interests = "rw"
@@ -152,7 +155,7 @@ class Connection < Handler
 		when OPEN
 			len = msg.slice(0, 4).unpack("N")[0]
 
-			CONNECTION_LOGGER.debug("Conn: Message arrived with length #{len}")
+			CONNECTION_LOGGER.debug("Message arrived with length #{len} from #{remote_peer}")
 
 			exploded = Unpacker.explode(self, msg)
 
@@ -181,7 +184,7 @@ class Connection < Handler
 	end
 
 	def send(message)
-		CONNECTION_LOGGER.debug("Sending: #{message.unpack("H*")}")
+		CONNECTION_LOGGER.debug("Sending: #{message.unpack("H*")} to #{remote_peer}")
 		@lock.synchronize {
 			@interests = "rw"
 			@queue.insert(0, message)
@@ -212,8 +215,6 @@ class Connection < Handler
 			if (@queue.length != 0)
 				data = @queue.pop
 
-				CONNECTION_LOGGER.debug("Attempting send of: #{data.unpack("H*")} #{@queue.length}")
-
 				begin
 					bytes = @socket.write_nonblock(data)
 					if (bytes != data.length)
@@ -221,6 +222,9 @@ class Connection < Handler
 						data.slice!(0, bytes)
 						@queue.insert(0)
 					end
+
+					CONNECTION_LOGGER.debug("Wrote #{bytes} q: #{@queue.length} to #{remote_peer}")
+
 				rescue IO::WaitWritable
 					# data never out the door, put it back
 					#
@@ -233,8 +237,19 @@ class Connection < Handler
 		}
 	end
 
+	def remote_peer
+		if (@lock.locked?)
+			@remote_peer
+		else
+			@lock.synchronize {
+				@remote_peer
+			}
+		end
+	end
+
 	def to_s
-		"Ctn #{@peer_id.unpack("H*")} hash: #{@info_hash.unpack("H*")}"
+		"Conn: #{object_id} #{remote_peer}"
+	#	"Ctn #{@peer_id.unpack("H*")} hash: #{@info_hash.unpack("H*")}"
 	end
 end
 
@@ -568,7 +583,7 @@ class Port
 	def initialize
 		@id = 9
 	end
-	
+
 	def explode(conn, content)
 		@port = content.unpack("N")[0]
 		@connection = conn
