@@ -20,6 +20,8 @@ class Picker
 	# Announces to Picker the loss of an available client's bitmap
 	#
 	def unavailable(bitmap)
+		PICKER_LOGGER.info("Unavailable: #{bitmap}")
+
 		bitmap.bits.each_with_index { | b, i |
 			if (b == 1)
 				count = @piece_freq[i]
@@ -37,6 +39,8 @@ class Picker
 	# Announces to Picker a client's current bitmap
 	#
 	def available(bitmap)
+		PICKER_LOGGER.info("Available: #{bitmap}")
+
 		bitmap.bits.each_with_index { | b, i |
 			if (b == 1)
 				count = @piece_freq[i]
@@ -79,6 +83,7 @@ class Picker
 	end
 
 	def release_piece(key)
+		PICKER_LOGGER.info("Piece released #{key}")
 		@booked_out.delete(key)
 	end
 
