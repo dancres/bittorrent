@@ -210,21 +210,25 @@ class Collector
 		puts response
 
 		if (response.code == 200)
-			puts "Good - going to pull: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}"
+			puts "Good - sharing: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}"
 			puts "#{@metainfo.info.directory}"
 
 			tr = Tracker::AnnounceResponse.new(response.body)
 
 			puts tr
 
-			# Start connection for each peer that isn't us (as identified by Socket)
-			my_addresses = Socket.ip_address_list.map { |addr| addr.ip_address}
+			# Actively connect because we need to download?
+			#
+			if (! @storage.complete?)
+				# Start connection for each peer that isn't us (as identified by Socket)
+				my_addresses = Socket.ip_address_list.map { |addr| addr.ip_address}
 
-			tr.peers.each { |peer|
-				if (! ((my_addresses.include?(peer.ip.ip_address) && (peer.port == @client_details.port))))
-					update(Peer.new(peer.id, peer.ip.ip_address, peer.port))
-				end
-			}
+				tr.peers.each { |peer|
+					if (! ((my_addresses.include?(peer.ip.ip_address) && (peer.port == @client_details.port))))
+						update(Peer.new(peer.id, peer.ip.ip_address, peer.port))
+					end
+				}
+			end			
 
 			@tracker_timer = @scheduler.add { |timers| timers.every(tr.interval) {
 				update(UpdateTracker.new)
