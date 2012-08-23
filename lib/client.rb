@@ -3,6 +3,7 @@ class ClientDetails
 
 	def initialize(port)
 		@port = port
-		@peer_id = "DC0001-#{(Time.now.to_f * 1000.0).to_i}".slice(0, 20).ljust(20, "-")
+		time = (Time.now.to_f * 1000).to_i.to_s.reverse
+		@peer_id = "DC0001-#{time}".slice(0, 20).ljust(20, "-")
 	end
 end
