@@ -484,9 +484,28 @@ class Collector
 						end
 					end
 
+				when PieceReady
+					conn = message.connection
+
+					if (conn.metadata { |meta| meta[PEER_CHOKED] })
+						COLLECTOR_LOGGER.warn("Dumping request for choking peer #{conn}")
+					else
+						conn.send(Piece.new.implode(message.piece, message.offset, message.buffer))
+						conn.metadata { |meta| meta[UPLOADED] += message.buffer.length}
+						@uploaded += message.buffer.length
+					end
+
 				when Request
 
-					# TODO: Request handling - update @uploaded with number of bytes plus connection level
+					conn = message.connection
+
+					if (conn.metadata { |meta| meta[PEER_CHOKED] })
+						COLLECTOR_LOGGER.warn("Dropping message from choked peer #{conn}")
+					else
+						@storage.read_block(message.index, [message.start, message.length]) { |buffer|
+							@queue.enq(PieceReady.new(conn, message.index, message.start, buffer))
+						}
+					end
 
 				when KeepAlive
 
@@ -583,6 +602,21 @@ class Collector
 
 		def initialize(status = Tracker::STATUS_UPDATE)
 			@status = status
+		end
+	end
+
+	class PieceReady
+		attr_reader :connection, :piece, :offset, :buffer
+
+		def initialize(conn, piece, offset, buffer)
+			@connection = conn
+			@piece = piece
+			@buffer = buffer
+			@offset = offset
+		end
+
+		def to_s
+			"Piece Ready: #{piece} #{offset} #{buffer.length} #{connection}"
 		end
 	end
 
