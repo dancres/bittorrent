@@ -563,7 +563,7 @@ class Collector
 	class UpdateTracker
 		attr_reader :status
 
-		def initialize(status = Tracker::UPDATE)
+		def initialize(status = Tracker::STATUS_UPDATE)
 			@status = status
 		end
 	end
