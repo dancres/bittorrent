@@ -498,12 +498,14 @@ class Collector
 				when Request
 
 					conn = message.connection
+					piece = message.index
+					start = message.start
 
 					if (conn.metadata { |meta| meta[PEER_CHOKED] })
 						COLLECTOR_LOGGER.warn("Dropping message from choked peer #{conn}")
 					else
 						@storage.read_block(message.index, [message.start, message.length]) { |buffer|
-							@queue.enq(PieceReady.new(conn, message.index, message.start, buffer))
+							@queue.enq(PieceReady.new(conn, piece, start, buffer))
 						}
 					end
 
