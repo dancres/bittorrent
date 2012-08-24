@@ -282,12 +282,12 @@ class Collector
 				when ChokePeer
 					message.connection.metadata { |meta| meta[PEER_CHOKED] = true }
 					message.connection.send(Choke.new.implode)
-					clear_requests(message.connection)
+
+					# TODO: We should kill outstanding peer requests (ACTIVE_REQUESTS) here
 
 				when UnchokePeer
 					message.connection.metadata { |meta| meta[PEER_CHOKED] = false }
 					message.connection.send(Unchoke.new.implode)
-					start_streaming(message.connection)
 
 				when Peer
 					socket = TCPSocket.new(message.ip, message.port)
