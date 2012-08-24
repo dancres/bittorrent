@@ -268,8 +268,10 @@ class Collector
 					@pool.each { |conn| 
 						up = conn.metadata { |meta| meta[UPLOADED] }
 						down = conn.metadata { |meta| meta[DOWNLOADED] }
+						pchoked = conn.metadata { |meta| meta[PEER_CHOKED] }
+						achoked = conn.metadata { |meta| meta[AM_CHOKED] }
 
-						CHOKER_LOGGER.debug("Conn: #{conn}: #{down} #{up}")
+						CHOKER_LOGGER.debug("Conn: #{conn} #{down} #{up} #{pchoked} #{achoked}")
 					}
 
 					@choker.run(@pool, @storage.complete?)
@@ -655,6 +657,9 @@ class Collector
 		end
 
 		def run(pool, complete)
+
+			CHOKER_LOGGER.debug("Choke::run #{pool} #{complete}")
+
 			@quantum +=1
 
 			rated = SortedSet.new
