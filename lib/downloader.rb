@@ -293,22 +293,40 @@ class Collector
 			message.connection.send(Unchoke.new.implode)
 
 		when Peer
-			socket = TCPSocket.new(message.ip, message.port)
-			conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
-			conn.metadata { |meta| 
-				meta[MODE] = CLIENT
-				meta[AM_CHOKED] = true
-				meta[AM_INTERESTED] = false
-				meta[PEER_CHOKED] = true
-				meta[PEER_INTERESTED] = false
-				meta[ACTIVE_REQUESTS] = []
-				meta[UPLOADED] = 0
-				meta[DOWNLOADED] = 0
-			}
+			begin
+				exists = false
 
-			conn.add_observer(self)
-			@pool.add(conn)
-			conn.start	
+				@pool.each { |conn|
+					addr = conn.remote_address
+
+					if ((addr.ip_address == message.ip) && (addr.ip_port == message.port))
+						exists = true
+					end
+				}
+
+				if (! exists)
+					socket = TCPSocket.new(message.ip, message.port)
+
+					conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+					conn.metadata { |meta| 
+						meta[MODE] = CLIENT
+						meta[AM_CHOKED] = true
+						meta[AM_INTERESTED] = false
+						meta[PEER_CHOKED] = true
+						meta[PEER_INTERESTED] = false
+						meta[ACTIVE_REQUESTS] = []
+						meta[UPLOADED] = 0
+						meta[DOWNLOADED] = 0
+					}
+
+					conn.add_observer(self)
+					@pool.add(conn)
+					conn.start
+				end
+
+			rescue => e
+				COLLECTOR_LOGGER.warn("Failed to connect #{message.ip} #{message.port} #{e.message} #{e.backtrace}")
+			end
 
 		when Client
 			conn = Connection.new(message.socket, Connection::HANDSHAKE_WAIT, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
