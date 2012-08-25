@@ -49,7 +49,11 @@ end
 TODO:
 
 Fast extensions and others
-Snubbing
+
+Snubbing - if the peer is interested in a remote peer and that remote peer has left this peer choked for more than
+60 seconds, mark it snubbed and choke it. The choke algorithm should then not admit this peer to unchoking unless
+it is selected via the random unchoke. Snubbing is disabled when the remote peer unchokes this peer or when
+it is explicitly unchoked via the random unchoke mentioned above.
 
 Chain of Responsibility
 =======================
