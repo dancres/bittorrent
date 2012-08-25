@@ -297,6 +297,8 @@ class Collector
 				meta[PEER_CHOKED] = true
 				meta[PEER_INTERESTED] = false
 				meta[ACTIVE_REQUESTS] = []
+				meta[UPLOADED] = 0
+				meta[DOWNLOADED] = 0
 			}
 
 			conn.add_observer(self)
@@ -312,6 +314,8 @@ class Collector
 				meta[PEER_CHOKED] = true
 				meta[PEER_INTERESTED] = false
 				meta[ACTIVE_REQUESTS] = []
+				meta[UPLOADED] = 0
+				meta[DOWNLOADED] = 0
 			}
 
 			conn.add_observer(self)
@@ -342,8 +346,6 @@ class Collector
 
 				conn.metadata { |meta| 
 					# meta[TIMER] = t
-					meta[UPLOADED] = 0
-					meta[DOWNLOADED] = 0
 				}
 			else
 				COLLECTOR_LOGGER.warn("Invalid #{message}")
