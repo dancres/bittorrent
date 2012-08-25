@@ -152,7 +152,7 @@ class Collector
 	SERVER = 11
 	DOWNLOADED = 12
 	UPLOADED = 13
-	# ACTIVE_REQUESTS	= 14
+	ACTIVE_REQUESTS	= 14
 
 	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, client_details)
 		@metainfo = metainfo
@@ -281,7 +281,7 @@ class Collector
 		when ChokePeer
 			message.connection.metadata { |meta| meta[PEER_CHOKED] = true }
 			message.connection.send(Choke.new.implode)
-			# message.connection.metadata { |meta| meta[ACTIVE_REQUESTS] = [] }
+			message.connection.metadata { |meta| meta[ACTIVE_REQUESTS] = [] }
 
 		when UnchokePeer
 			message.connection.metadata { |meta| meta[PEER_CHOKED] = false }
@@ -296,7 +296,7 @@ class Collector
 				meta[AM_INTERESTED] = false
 				meta[PEER_CHOKED] = true
 				meta[PEER_INTERESTED] = false
-				# meta[ACTIVE_REQUESTS] = []
+				meta[ACTIVE_REQUESTS] = []
 			}
 
 			conn.add_observer(self)
@@ -311,7 +311,7 @@ class Collector
 				meta[AM_INTERESTED] = false
 				meta[PEER_CHOKED] = true
 				meta[PEER_INTERESTED] = false
-				# meta[ACTIVE_REQUESTS] = []
+				meta[ACTIVE_REQUESTS] = []
 			}
 
 			conn.add_observer(self)
@@ -497,20 +497,19 @@ class Collector
 			conn = message.connection
 
 			# Ensure this request is still active
-			#			
-			# found = conn.metadata { | meta |
-			# 	meta[ACTIVE_REQUESTS].reject! { | req | 
-			# 		if (req[0] == message.piece && req[1] == message.offset)
-			# 			true
-			# 		else
-			# 			false
-			# 		end
-			# 	}
-			# }
+			found = conn.metadata { | meta |
+				meta[ACTIVE_REQUESTS].reject! { | req | 
+					if (req[0] == message.piece && req[1] == message.offset)
+						true
+					else
+						false
+					end
+				}
+			}
 
-			# if (! found)
-			# 	COLLECTOR_LOGGER.warn("Dump request, it's been cancelled #{message.piece} #{message.offset} #{conn.metadata { |meta| meta[ACTIVE_REQUESTS]}}")
-			# else
+			if (! found)
+				COLLECTOR_LOGGER.warn("Dump request, it's been cancelled #{message.piece} #{message.offset} #{conn.metadata { |meta| meta[ACTIVE_REQUESTS]}}")
+			else
 				if (conn.metadata { |meta| meta[PEER_CHOKED] })
 					COLLECTOR_LOGGER.warn("Dumping request for choking peer #{conn}")
 				else
@@ -518,7 +517,7 @@ class Collector
 					conn.metadata { |meta| meta[UPLOADED] += message.buffer.length}
 					@uploaded += message.buffer.length
 				end
-			# end
+			end
 
 		when Request
 
@@ -529,10 +528,9 @@ class Collector
 				raise "Consistency problem"
 			else
 				# Record the request
-				#
-				# conn.metadata { | meta | meta[ACTIVE_REQUESTS] << [message.index, message.start] 
-				# 	COLLECTOR_LOGGER.debug("Recording request #{meta[ACTIVE_REQUESTS]}")							
-				# }
+				conn.metadata { | meta | meta[ACTIVE_REQUESTS] << [message.index, message.start] 
+					COLLECTOR_LOGGER.debug("Recording request #{meta[ACTIVE_REQUESTS]}")							
+				}
 
 				@storage.read_block(message.index, [message.start, message.length]) { |buffer|
 					@queue.enq(PieceReady.new(conn, message.index, message.start, buffer))
@@ -545,15 +543,15 @@ class Collector
 
 		when Cancel
 
-			# conn.metadata { | meta |
-			# 	meta[ACTIVE_REQUESTS].reject! { | req | 
-			# 		if (req[0] == message.index && req[1] == message.start)
-			# 			true
-			# 		else
-			# 			false
-			# 		end
-			# 	}
-			# }
+			conn.metadata { | meta |
+				meta[ACTIVE_REQUESTS].reject! { | req | 
+					if (req[0] == message.index && req[1] == message.start)
+						true
+					else
+						false
+					end
+				}
+			}
 
 		when Closed
 			COLLECTOR_LOGGER.warn("Connection closed: #{conn}")
