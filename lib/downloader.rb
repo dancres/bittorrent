@@ -209,6 +209,7 @@ class Collector
 		if (response.code == 200)
 			puts "Good - sharing: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}"
 			puts "#{@metainfo.info.directory}"
+			puts "I am #{@client_details.peer_id}"
 
 			tr = Tracker::AnnounceResponse.new(response.body)
 
