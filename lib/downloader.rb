@@ -211,11 +211,6 @@ class Collector
 		exists
 	end
 
-	# TODO: Make this one shot and at each processing of timer register a new one
-	# If tracker fails and we have peers, try again in 30 minutes.
-	# If no peers, try every five minutes. And if we're told status is stopped, don't renew the timer
-	# Stop returning on a bad response
-	#
 	def ping_tracker
 		response = @tracker.ping({Tracker::UPLOADED => @uploaded, Tracker::DOWNLOADED => @downloaded, 
 			Tracker::LEFT => (@storage.overall_bytes - @storage.current_bytes),
@@ -641,9 +636,6 @@ class Collector
 	end
 
 	def wouldSend(conn)
-		# TODO: Need to test for PEER_UNCHOKED - the Choking algorithm tells us who we can
-		# pull from just as it tells us who can pull from us - make sense? Don't think so.
-		#
 		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED]) }
 	end
 
