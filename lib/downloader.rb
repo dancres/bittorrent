@@ -152,6 +152,7 @@ class Collector
 	SERVER = 11
 	DOWNLOADED = 12
 	UPLOADED = 13
+	# ACTIVE_REQUESTS	= 14
 
 	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, client_details)
 		@metainfo = metainfo
@@ -242,295 +243,336 @@ class Collector
 			}}
 
 		until terminate? do
-			message = @queue.deq
-
-			case message
-			
-			when ChokeAlgo
-			
-			when KeepAlive
-
-			else
-				COLLECTOR_LOGGER.debug("Message: #{message}")
-			end
-
-			if (! terminate?)
-				case message
-				
-				when ChokeAlgo
-					CHOKER_LOGGER.debug("Current stats: #{@downloaded}, #{@uploaded}")
-					@pool.each { |conn| 
-						up = conn.metadata { |meta| meta[UPLOADED] }
-						down = conn.metadata { |meta| meta[DOWNLOADED] }
-						pchoked = conn.metadata { |meta| meta[PEER_CHOKED] }
-						achoked = conn.metadata { |meta| meta[AM_CHOKED] }
-
-						CHOKER_LOGGER.debug("Conn: #{conn} #{down} #{up} #{pchoked} #{achoked}")
-					}
-
-					@choker.run(@pool, @storage.complete?)
-
-				when UpdateTracker
-					ping_tracker(message.status)
-
-				when ChokePeer
-					message.connection.metadata { |meta| meta[PEER_CHOKED] = true }
-					message.connection.send(Choke.new.implode)
-
-					# TODO: We should kill outstanding peer requests (ACTIVE_REQUESTS) here
-
-				when UnchokePeer
-					message.connection.metadata { |meta| meta[PEER_CHOKED] = false }
-					message.connection.send(Unchoke.new.implode)
-
-				when Peer
-					socket = TCPSocket.new(message.ip, message.port)
-					conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
-					conn.metadata { |meta| 
-						meta[MODE] = CLIENT
-						meta[AM_CHOKED] = true
-						meta[AM_INTERESTED] = false
-						meta[PEER_CHOKED] = true
-						meta[PEER_INTERESTED] = false
-					}
-
-					conn.add_observer(self)
-					@pool.add(conn)
-					conn.start	
-
-				when Client
-					conn = Connection.new(message.socket, Connection::HANDSHAKE_WAIT, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
-					conn.metadata { |meta| 
-						meta[MODE] = SERVER
-						meta[AM_CHOKED] = true
-						meta[AM_INTERESTED] = false
-						meta[PEER_CHOKED] = true
-						meta[PEER_INTERESTED] = false
-					}
-
-					conn.add_observer(self)
-					@pool.add(conn)
-					conn.start	
-
-				when Handshake
-					conn = message.connection
-
-					if (@metainfo.info.sha1_hash == message.info_hash)
-						COLLECTOR_LOGGER.debug("Valid #{message}")
-
-						# We ought to send a have to a peer so long as there's been a handshake.
-						# We may receive a bitfield or we may never (for a base protocol client) and denying
-						# it haves would be wrong (especially as that might prompt an upload to that peer).
-						# So when we see it's handshake, we initialise it's available to the empty bitset 
-						# until we see otherwise.
-						#
-						conn.metadata { |meta| meta[BITFIELD] = Bitset.new(@metainfo.info.pieces.pieces.length).fill(0)}
-
-						conn.send(Bitfield.new.implode(@storage.got))
-
-						t = @scheduler.add { |timers| timers.every(20) {
-								conn.send(KeepAlive.new.implode)
-							}}
-
-						conn.metadata { |meta| 
-							meta[TIMER] = t
-							meta[UPLOADED] = 0
-							meta[DOWNLOADED] = 0
-						}
-					else
-						COLLECTOR_LOGGER.warn("Invalid #{message}")
-						conn.close 
-					end
-
-				when Bitfield
-					conn = message.connection
-
-					b = Bitset.new(@metainfo.info.pieces.pieces.length).from_binary(message.bitfield)
-
-					@picker.available(b)
-					conn.metadata { |meta| meta[BITFIELD] = b }
-
-					if (b.and(@storage.needed).nonZero)
-						conn.metadata { |meta| meta[AM_INTERESTED] = true }
-						conn.send(Interested.new.implode)
-
-						start_streaming(conn)
-					end
-
-				when Have
-					conn = message.connection
-					b = conn.metadata { |meta| meta[BITFIELD] }
-
-					if (b == nil)
-						b = Bitset.new(@metainfo.info.pieces.pieces.length)
-						conn.metadata { |meta| meta[BITFIELD] = b }
-					end
-
-					b.set(message.index)
-
-					if (! conn.metadata { |meta| meta[AM_INTERESTED] })
-						if (b.and(@storage.needed).nonZero)
-							conn.metadata { |meta| meta[AM_INTERESTED] = true }
-							conn.send(Interested.new.implode)
-
-							start_streaming(conn)
-						end						
-					end
-
-				when Choke
-					conn = message.connection
-					conn.metadata { |meta| meta[AM_CHOKED] = true }
-
-					clear_requests(conn)
-
-				when Unchoke
-					conn = message.connection
-					conn.metadata { |meta| meta[AM_CHOKED] = false }
-
-					start_streaming(conn)
-
-				when Interested
-					conn = message.connection
-					conn.metadata { |meta| meta[PEER_INTERESTED] = true }
-
-				when NotInterested
-					conn = message.connection
-					conn.metadata { |meta| meta[PEER_INTERESTED] = false }
-
-					if (! conn.metadata { |meta| meta[PEER_CHOKED] })
-						conn.metadata { |meta| meta[PEER_CHOKED] = true }
-						conn.send(Choke.new.implode)
-					end
-
-				when PieceCompleted
-					conn = message.connection
-					piece = message.piece
-
-					if (@storage.complete?)
-						update(UpdateTracker.new(Tracker::STATUS_COMPLETED))
-
-						COLLECTOR_LOGGER.info("Download completed")
-					end
-
-					if (message.success)
-
-						# Send out not interested to anyone that can't supply us, also update our AM_INTERESTED
-						# Send out have to any connections that are missing the piece we got
-						#
-						outstanding = @storage.needed
-
-						@pool.each { |c| 
-							available = c.metadata { |meta| meta[BITFIELD] }
-
-							# If we're interested that can only be because we've seen a HAVE or BITFIELD which means no null check
-							# of available is required.
-							#
-							if (c.metadata { |meta| meta[AM_INTERESTED] })
-								if ((@storage.complete?) || (! available.and(outstanding).nonZero))
-									c.metadata { |meta| meta[AM_INTERESTED] = false }
-									c.send(NotInterested.new.implode)
-								end
-							end
-
-							# In this general case, we have no guarantee we got a handshake on this connection.
-							#
-							if (available != nil)
-								if (available.get(piece) == 0)
-									c.send(Have.new.implode(piece))
-								end
-							end
-						}
-					else
-						COLLECTOR_LOGGER.warn("Failed piece #{piece} on #{conn}")
-					end
-
-					clear_requests(conn)
-
-					start_streaming(conn)
-
-				when Piece
-					conn = message.connection					
-					piece = conn.metadata { |meta| meta[PIECE] }
-
-					if (piece == nil)
-						COLLECTOR_LOGGER.warn("Unexpected piece - dropped #{conn}")
-					else
-						blocks = conn.metadata { |meta| meta[BLOCKS] }
-						current_block = blocks.take(1).flatten
-						remaining_blocks = blocks.drop(1)
-
-						@storage.save_block(piece, current_block, message.block)
-						@downloaded += message.block.length
-
-						conn.metadata { |meta|
-							meta[DOWNLOADED] += message.block.length
-						}
-
-						if (remaining_blocks.length == 0)
-							@storage.piece_complete(piece) { | success | 
-								@queue.enq(PieceCompleted.new(conn, piece, success)) }
-						else
-							conn.metadata { |meta| meta[BLOCKS] = remaining_blocks }
-
-							if (wouldSend(conn))
-								range = remaining_blocks.take(1).flatten
-								COLLECTOR_LOGGER.debug("Next block #{piece} #{range}")
-								conn.send(Request.new.implode(piece, range[0], range[1]))
-							end
-						end
-					end
-
-				when PieceReady
-					conn = message.connection
-
-					if (conn.metadata { |meta| meta[PEER_CHOKED] })
-						COLLECTOR_LOGGER.warn("Dumping request for choking peer #{conn}")
-					else
-						conn.send(Piece.new.implode(message.piece, message.offset, message.buffer))
-						conn.metadata { |meta| meta[UPLOADED] += message.buffer.length}
-						@uploaded += message.buffer.length
-					end
-
-				when Request
-
-					conn = message.connection
-					piece = message.index
-					start = message.start
-
-					if (conn.metadata { |meta| meta[PEER_CHOKED] })
-						COLLECTOR_LOGGER.warn("Dropping message from choked peer #{conn}")
-					else
-						@storage.read_block(message.index, [message.start, message.length]) { |buffer|
-							@queue.enq(PieceReady.new(conn, piece, start, buffer))
-						}
-					end
-
-				when KeepAlive
-
-					# TODO: Ought to track connection liveness
-
-				when Closed
-					COLLECTOR_LOGGER.warn("Connection closed: #{conn}")
-
-					conn = message.connection
-
-					@pool.remove(conn)
-
-					t = conn.metadata { |meta| meta[TIMER] }
-					t.cancel unless (t == nil)
-
-					bitmap = conn.metadata { |meta| meta[BITFIELD] }
-					@picker.unavailable(bitmap) unless (bitmap == nil)
-
-					clear_requests(conn)
-
-				else
-					COLLECTOR_LOGGER.warn("Unprocessed message: #{message}")
-				end
-			end
+			process(@queue.deq)			
 		end
 
 		ping_tracker(Tracker::STATUS_STOPPED)
+	end
+
+	def process(message)
+		case message
+		
+		when ChokeAlgo
+		
+		when KeepAlive
+
+		else
+			COLLECTOR_LOGGER.debug("Message: #{message}")
+		end
+
+		case message
+		
+		when ChokeAlgo
+			CHOKER_LOGGER.debug("Current stats: #{@downloaded}, #{@uploaded}")
+			@pool.each { |conn| 
+				up = conn.metadata { |meta| meta[UPLOADED] }
+				down = conn.metadata { |meta| meta[DOWNLOADED] }
+				pchoked = conn.metadata { |meta| meta[PEER_CHOKED] }
+				achoked = conn.metadata { |meta| meta[AM_CHOKED] }
+
+				CHOKER_LOGGER.debug("Conn: #{conn} #{down} #{up} #{pchoked} #{achoked}")
+			}
+
+			@choker.run(@pool, @storage.complete?)
+
+		when UpdateTracker
+			ping_tracker(message.status)
+
+		when ChokePeer
+			message.connection.metadata { |meta| meta[PEER_CHOKED] = true }
+			message.connection.send(Choke.new.implode)
+			# message.connection.metadata { |meta| meta[ACTIVE_REQUESTS] = [] }
+
+		when UnchokePeer
+			message.connection.metadata { |meta| meta[PEER_CHOKED] = false }
+			message.connection.send(Unchoke.new.implode)
+
+		when Peer
+			socket = TCPSocket.new(message.ip, message.port)
+			conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+			conn.metadata { |meta| 
+				meta[MODE] = CLIENT
+				meta[AM_CHOKED] = true
+				meta[AM_INTERESTED] = false
+				meta[PEER_CHOKED] = true
+				meta[PEER_INTERESTED] = false
+				# meta[ACTIVE_REQUESTS] = []
+			}
+
+			conn.add_observer(self)
+			@pool.add(conn)
+			conn.start	
+
+		when Client
+			conn = Connection.new(message.socket, Connection::HANDSHAKE_WAIT, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+			conn.metadata { |meta| 
+				meta[MODE] = SERVER
+				meta[AM_CHOKED] = true
+				meta[AM_INTERESTED] = false
+				meta[PEER_CHOKED] = true
+				meta[PEER_INTERESTED] = false
+				# meta[ACTIVE_REQUESTS] = []
+			}
+
+			conn.add_observer(self)
+			@pool.add(conn)
+			conn.start	
+
+		when Handshake
+			conn = message.connection
+
+			if (@metainfo.info.sha1_hash == message.info_hash)
+				COLLECTOR_LOGGER.debug("Valid #{message}")
+
+				# We ought to send a have to a peer so long as there's been a handshake.
+				# We may receive a bitfield or we may never (for a base protocol client) and denying
+				# it haves would be wrong (especially as that might prompt an upload to that peer).
+				# So when we see it's handshake, we initialise it's available to the empty bitset 
+				# until we see otherwise.
+				#
+				conn.metadata { |meta| meta[BITFIELD] = Bitset.new(@metainfo.info.pieces.pieces.length).fill(0)}
+
+				conn.send(Bitfield.new.implode(@storage.got))
+
+				# TODO: Restore keepalive, make it happen only after periods of silence
+				#
+				#t = @scheduler.add { |timers| timers.every(20) {
+				#		conn.send(KeepAlive.new.implode)
+				#	}}
+
+				conn.metadata { |meta| 
+					# meta[TIMER] = t
+					meta[UPLOADED] = 0
+					meta[DOWNLOADED] = 0
+				}
+			else
+				COLLECTOR_LOGGER.warn("Invalid #{message}")
+				conn.close 
+			end
+
+		when Bitfield
+			conn = message.connection
+
+			b = Bitset.new(@metainfo.info.pieces.pieces.length).from_binary(message.bitfield)
+
+			@picker.available(b)
+			conn.metadata { |meta| meta[BITFIELD] = b }
+
+			if (b.and(@storage.needed).nonZero)
+				conn.metadata { |meta| meta[AM_INTERESTED] = true }
+				conn.send(Interested.new.implode)
+
+				start_streaming(conn)
+			end
+
+		when Have
+			conn = message.connection
+			b = conn.metadata { |meta| meta[BITFIELD] }
+
+			if (b == nil)
+				b = Bitset.new(@metainfo.info.pieces.pieces.length)
+				conn.metadata { |meta| meta[BITFIELD] = b }
+			end
+
+			b.set(message.index)
+
+			if (! conn.metadata { |meta| meta[AM_INTERESTED] })
+				if (b.and(@storage.needed).nonZero)
+					conn.metadata { |meta| meta[AM_INTERESTED] = true }
+					conn.send(Interested.new.implode)
+
+					start_streaming(conn)
+				end						
+			end
+
+		when Choke
+			conn = message.connection
+			conn.metadata { |meta| meta[AM_CHOKED] = true }
+
+			clear_requests(conn)
+
+		when Unchoke
+			conn = message.connection
+			conn.metadata { |meta| meta[AM_CHOKED] = false }
+
+			start_streaming(conn)
+
+		when Interested
+			conn = message.connection
+			conn.metadata { |meta| meta[PEER_INTERESTED] = true }
+
+		when NotInterested
+			conn = message.connection
+			conn.metadata { |meta| meta[PEER_INTERESTED] = false }
+
+			if (! conn.metadata { |meta| meta[PEER_CHOKED] })
+				conn.metadata { |meta| meta[PEER_CHOKED] = true }
+				conn.send(Choke.new.implode)
+			end
+
+		when PieceCompleted
+			conn = message.connection
+			piece = message.piece
+
+			if (@storage.complete?)
+				update(UpdateTracker.new(Tracker::STATUS_COMPLETED))
+
+				COLLECTOR_LOGGER.info("Download completed")
+			end
+
+			if (message.success)
+
+				# Send out not interested to anyone that can't supply us, also update our AM_INTERESTED
+				# Send out have to any connections that are missing the piece we got
+				#
+				outstanding = @storage.needed
+
+				@pool.each { |c| 
+					available = c.metadata { |meta| meta[BITFIELD] }
+
+					# If we're interested that can only be because we've seen a HAVE or BITFIELD which means no null check
+					# of available is required.
+					#
+					if (c.metadata { |meta| meta[AM_INTERESTED] })
+						if ((@storage.complete?) || (! available.and(outstanding).nonZero))
+							c.metadata { |meta| meta[AM_INTERESTED] = false }
+							c.send(NotInterested.new.implode)
+						end
+					end
+
+					# In this general case, we have no guarantee we got a handshake on this connection.
+					#
+					if (available != nil)
+						if (available.get(piece) == 0)
+							c.send(Have.new.implode(piece))
+						end
+					end
+				}
+			else
+				COLLECTOR_LOGGER.warn("Failed piece #{piece} on #{conn}")
+			end
+
+			clear_requests(conn)
+
+			start_streaming(conn)
+
+		when Piece
+			conn = message.connection					
+			piece = conn.metadata { |meta| meta[PIECE] }
+			data = message.block
+
+			if (piece == nil)
+				COLLECTOR_LOGGER.warn("Unexpected piece - dropped #{conn}")
+			else
+				if (piece != message.index)
+					raise "Requested piece doesn't match piece in message #{piece} #{message.index}"
+				end
+
+				blocks = conn.metadata { |meta| meta[BLOCKS] }
+				current_block = blocks.take(1).flatten
+				remaining_blocks = blocks.drop(1)
+
+				@storage.save_block(piece, current_block, data)
+				@downloaded += message.block.length
+
+				conn.metadata { |meta|
+					meta[DOWNLOADED] += message.block.length
+				}
+
+				if (remaining_blocks.length == 0)
+					@storage.piece_complete(piece) { | success | 
+						@queue.enq(PieceCompleted.new(conn, piece, success)) }
+				else
+					conn.metadata { |meta| meta[BLOCKS] = remaining_blocks }
+
+					if (wouldSend(conn))
+						range = remaining_blocks.take(1).flatten
+						COLLECTOR_LOGGER.debug("Next block #{piece} #{range}")
+						conn.send(Request.new.implode(piece, range[0], range[1]))
+					end
+				end
+			end
+
+		when PieceReady
+			conn = message.connection
+
+			# Ensure this request is still active
+			#			
+			# found = conn.metadata { | meta |
+			# 	meta[ACTIVE_REQUESTS].reject! { | req | 
+			# 		if (req[0] == message.piece && req[1] == message.offset)
+			# 			true
+			# 		else
+			# 			false
+			# 		end
+			# 	}
+			# }
+
+			# if (! found)
+			# 	COLLECTOR_LOGGER.warn("Dump request, it's been cancelled #{message.piece} #{message.offset} #{conn.metadata { |meta| meta[ACTIVE_REQUESTS]}}")
+			# else
+				if (conn.metadata { |meta| meta[PEER_CHOKED] })
+					COLLECTOR_LOGGER.warn("Dumping request for choking peer #{conn}")
+				else
+					conn.send(Piece.new.implode(message.piece, message.offset, message.buffer))
+					conn.metadata { |meta| meta[UPLOADED] += message.buffer.length}
+					@uploaded += message.buffer.length
+				end
+			# end
+
+		when Request
+
+			conn = message.connection
+
+			if (conn.metadata { |meta| meta[PEER_CHOKED] })
+				COLLECTOR_LOGGER.warn("Dropping message from choked peer #{conn}")
+				raise "Consistency problem"
+			else
+				# Record the request
+				#
+				# conn.metadata { | meta | meta[ACTIVE_REQUESTS] << [message.index, message.start] 
+				# 	COLLECTOR_LOGGER.debug("Recording request #{meta[ACTIVE_REQUESTS]}")							
+				# }
+
+				@storage.read_block(message.index, [message.start, message.length]) { |buffer|
+					@queue.enq(PieceReady.new(conn, message.index, message.start, buffer))
+				}
+			end
+
+		when KeepAlive
+
+			# TODO: Ought to track connection liveness
+
+		when Cancel
+
+			# conn.metadata { | meta |
+			# 	meta[ACTIVE_REQUESTS].reject! { | req | 
+			# 		if (req[0] == message.index && req[1] == message.start)
+			# 			true
+			# 		else
+			# 			false
+			# 		end
+			# 	}
+			# }
+
+		when Closed
+			COLLECTOR_LOGGER.warn("Connection closed: #{conn}")
+
+			conn = message.connection
+
+			@pool.remove(conn)
+
+			t = conn.metadata { |meta| meta[TIMER] }
+			t.cancel unless (t == nil)
+
+			bitmap = conn.metadata { |meta| meta[BITFIELD] }
+			@picker.unavailable(bitmap) unless (bitmap == nil)
+
+			clear_requests(conn)
+
+		else
+			COLLECTOR_LOGGER.warn("Unprocessed message: #{message}")
+		end
 	end
 
 	def clear_requests(conn)
@@ -557,7 +599,17 @@ class Collector
 			return
 		end
 
+		if ((conn.metadata { |meta| meta[PIECE] }) != nil)
+			raise "In-flight request shouldn't be present"
+		end
+
 		piece = @picker.next_piece(@storage.needed, conn.metadata { |meta| meta[BITFIELD] })
+
+		if (piece == nil)
+			COLLECTOR_LOGGER.debug("No piece I can get")
+			return
+		end
+
 		blocks = @storage.blocks(piece)
 		COLLECTOR_LOGGER.debug("Selected piece: #{piece} #{blocks}")
 
