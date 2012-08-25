@@ -756,16 +756,10 @@ class Collector
 
 				# Once we've found our first interested, there can be no more uninterested peers
 				#
-				if (interested.length > 0)
-					if (c.connection.metadata { |meta| meta[PEER_INTERESTED] })
-						interested << c.connection
-					end
+				if (c.connection.metadata { |meta| meta[PEER_INTERESTED] })
+					interested << c.connection
 				else
-					if (c.connection.metadata { |meta| meta[PEER_INTERESTED] })
-						interested << c.connection
-					else
-						uninterested << c.connection
-					end
+					uninterested << c.connection
 				end
 			}
 
