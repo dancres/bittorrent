@@ -46,31 +46,24 @@ end
 
 =begin
 
-If each message from a connection includes the connection itself and that connection indicates whether it is
-server or client mode we can proceed and determine what to do with handshakes, bitmaps etc.
-
-So for a connection from a client, the message might be "new connection, server" and we'd add ourselves as listener,
-waiting for a handshake.
-
-For a connection to a server, we'd get a message "new peer" and create a client connection into which we'd queue a
-handshake straightaway.
-
-We could have a connection support meta-data which we could markup to include it's server or client status, 
-bitmap etc.
-
-The connection could then be started with this meta-data and a signal for how to do the open (handshake first or
-second) and it would call back with the handshake from the client at the appropriate moment. This allows
-connection to continue handling e.g. warden constructs.
-
-We'll need some timers to e.g. update Tracker. The timers gem (installed with rake install in timers dir) can do
-this but is not thread-safe. BEWARE!
-
 TODO:
 
-We'll also need to handle choke, unchoke, interested and uninterested - catching others and sending ours
-Choking, snubbing, keep alives etc
-Server socket handling
-Statistics - per connection (state machine maintains them for upload and download bytes)
+Discovery of new peers over time
+Fast extensions and others
+Elegant shutdown via processing of :poison message?
+Snubbing
+Dead connections - peer, client and server
+
+Chain of Responsibility
+=======================
+
+Could change the observer structure so that we have a chain of responsibility arrangement for processing messages.
+This might allow clean and separate state machines for e.g. fast extensions. Or at least clean and separate protocol
+handling that updates a core state machine. That state machine might need some form of meta-data arrangement as per
+connection.
+
+Without something of this ilk the downloader state machine will get larger and more complex - is that healthy? Can
+we break it down some more?
 
 Choke Algorithm
 ===============
