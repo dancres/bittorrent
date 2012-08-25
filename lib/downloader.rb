@@ -154,6 +154,7 @@ class Collector
 	DOWNLOADED = 12
 	UPLOADED = 13
 	ACTIVE_REQUESTS	= 14
+	CHOKE_TIMESTAMP = 15
 
 	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, client_details)
 		@metainfo = metainfo
@@ -309,16 +310,6 @@ class Collector
 			return
 
 		when ChokeAlgo
-			CHOKER_LOGGER.debug("Current stats: #{@downloaded}, #{@uploaded}")
-			@pool.each { |conn| 
-				up = conn.metadata { |meta| meta[UPLOADED] }
-				down = conn.metadata { |meta| meta[DOWNLOADED] }
-				pchoked = conn.metadata { |meta| meta[PEER_CHOKED] }
-				achoked = conn.metadata { |meta| meta[AM_CHOKED] }
-
-				CHOKER_LOGGER.debug("Conn: #{conn} #{down} #{up} #{pchoked} #{achoked}")
-			}
-
 			@choker.run(@pool, @storage.complete?)
 
 		when UpdateTracker
@@ -443,6 +434,7 @@ class Collector
 		when Choke
 			conn = message.connection
 			conn.metadata { |meta| meta[AM_CHOKED] = true }
+			conn.metadata { |meta| meta[CHOKE_TIMESTAMP] = @scheduler.current_time_millis }
 
 			clear_requests(conn)
 
@@ -739,6 +731,17 @@ class Collector
 		def run(pool, complete)
 
 			CHOKER_LOGGER.debug("Choke::run #{pool} #{complete}")
+
+			CHOKER_LOGGER.debug("Current stats: #{@downloaded}, #{@uploaded}")
+			pool.each { |conn| 
+				up = conn.metadata { |meta| meta[UPLOADED] }
+				down = conn.metadata { |meta| meta[DOWNLOADED] }
+				pchoked = conn.metadata { |meta| meta[PEER_CHOKED] }
+				achoked = conn.metadata { |meta| meta[AM_CHOKED] }
+				time_choked = conn.metadata { |meta| meta[CHOKE_TIMESTAMP] }
+
+				CHOKER_LOGGER.debug("Conn: #{conn} #{down} #{up} #{pchoked} #{achoked} #{time_choked}")
+			}			
 
 			@quantum +=1
 
