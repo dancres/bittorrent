@@ -86,27 +86,30 @@ class Storage
 		Thread.current.abort_on_exception = true
 
 		until false do
-			message = @queue.deq
-
-			case message
-
-			when :poison
-				return
-
-			when SaveBlock
-				save_block_impl(message.piece, message.block_range, message.data)
-
-			when VerifyPiece
-				@lock.synchronize {
-					@got.set(message.piece)
-				}
-
-				message.block.call(true)
-
-			when ReadBlock
-				message.block.call(read_block_impl(message.piece, message.block_range))
-			end			
+			process(@queue.deq)
 		end
+	end
+
+	def process(message)
+
+		case message
+
+		when :poison
+			Thread::exit
+
+		when SaveBlock
+			save_block_impl(message.piece, message.block_range, message.data)
+
+		when VerifyPiece
+			@lock.synchronize {
+				@got.set(message.piece)
+			}
+
+			message.block.call(true)
+
+		when ReadBlock
+			message.block.call(read_block_impl(message.piece, message.block_range))
+		end			
 	end
 
 	def locate(offset)
