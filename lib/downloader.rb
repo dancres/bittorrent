@@ -546,9 +546,9 @@ class Collector
 
 	def wouldSend(conn)
 		# TODO: Need to test for PEER_UNCHOKED - the Choking algorithm tells us who we can
-		# pull from just as it tells us who can pull from us
+		# pull from just as it tells us who can pull from us - make sense? Don't think so.
 		#
-		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED] && !meta[PEER_CHOKED]) }
+		conn.metadata { |meta| (!meta[AM_CHOKED] && meta[AM_INTERESTED]) }
 	end
 
 	def start_streaming(conn)
