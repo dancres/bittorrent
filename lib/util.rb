@@ -61,6 +61,12 @@ class Pool
 		}
 	end
 
+	def length
+		@lock.synchronize {
+			@pool.length
+		}
+	end
+
 	def each &block
 		@lock.synchronize {
 			@pool.each{ |obj| block.call(obj) }
