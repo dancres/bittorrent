@@ -41,7 +41,19 @@ class Tracker
   def http_get(domain,path,params)
       URI.parse(tracker + path + "?".concat(params.collect { |k,v| "#{k}=#{CGI::escape(v.to_s)}" }.join('&')))
       
-      RestClient.get "#{domain}#{path}", {:params => params}
+      begin
+        RestClient.get "#{domain}#{path}", {:params => params}
+      rescue
+        FailResponse.new
+      end
+  end
+
+  class FailResponse
+    attr_reader :code
+
+    def initialize
+      @code = 500
+    end
   end
 
   class AnnounceResponse
