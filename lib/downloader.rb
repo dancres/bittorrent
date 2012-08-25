@@ -269,9 +269,9 @@ class Collector
 	def run
 		Thread.current.abort_on_exception = true
 
-		puts "Sharing: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}"
-		puts "#{@metainfo.info.directory}"
-		puts "I am #{@client_details.peer_id}"
+		COLLECTOR_LOGGER.info("Sharing: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}")
+		COLLECTOR_LOGGER.info("#{@metainfo.info.directory}")
+		COLLECTOR_LOGGER.info("I am #{@client_details.peer_id}")
 
 		@tracker_timer = @scheduler.add { |timers| timers.after(5) {
 			update(UpdateTracker.new)
