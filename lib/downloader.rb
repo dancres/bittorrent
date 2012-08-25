@@ -262,6 +262,11 @@ class Collector
 
 		case message
 		
+		when :poison
+
+			COLLECTOR_LOGGER.info("Exiting downloader")
+			return
+
 		when ChokeAlgo
 			CHOKER_LOGGER.debug("Current stats: #{@downloaded}, #{@uploaded}")
 			@pool.each { |conn| 
