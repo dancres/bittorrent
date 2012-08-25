@@ -732,7 +732,7 @@ class Collector
 
 			def <=>(another_comparator)
 				mine = connection.metadata { |meta| meta[@field] }
-				other another_comparator.connection.metadata { |meta| meta[@field] }
+				other = another_comparator.connection.metadata { |meta| meta[@field] }
 
 				if (mine < other)
 					-1
