@@ -3,6 +3,10 @@ require 'thread'
 require 'set'
 
 class Scheduler
+	def current_time_millis
+		(Time.now.to_f * 1000).to_i
+	end
+
 	def initialize
 		@timers = Timers.new
 		@lock = Mutex.new
