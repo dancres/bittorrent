@@ -96,6 +96,10 @@ class Connection < Handler
 		}
 	end
 
+	def remote_address
+		@socket.remote_address
+	end
+
 	def io
 		@socket
 	end
