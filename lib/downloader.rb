@@ -371,8 +371,9 @@ class Collector
 					# meta[TIMER] = t
 				}
 			else
-				COLLECTOR_LOGGER.warn("Invalid #{message}")
+				COLLECTOR_LOGGER.warn("Invalid handshake #{message}")
 				conn.close 
+				@pool.remove(conn)
 			end
 
 		when Bitfield
