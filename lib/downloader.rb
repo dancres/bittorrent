@@ -48,11 +48,8 @@ end
 
 TODO:
 
-Discovery of new peers over time
 Fast extensions and others
-Elegant shutdown via processing of :poison message?
 Snubbing
-Dead connections - peer, client and server
 
 Chain of Responsibility
 =======================
@@ -168,6 +165,8 @@ class Collector
 		@queue = Queue.new
 		@storage = storage
 		@tracker = tracker
+		@tracker_status = Tracker::STATUS_STARTED
+		@tracker_interval = -1
 		@picker = Picker.new(@metainfo.info.pieces.pieces.length)
 		@uploaded = 0
 		@downloaded = 0		
@@ -198,21 +197,43 @@ class Collector
 		@queue.enq(message)
 	end
 
-	def run
-		Thread.current.abort_on_exception = true
+	def peer_connected?(ip, port)
+		exists = false
 
-		response = @tracker.ping({Tracker::UPLOADED => 0, Tracker::DOWNLOADED => 0, 
+		@pool.each { |conn|
+			addr = conn.remote_address
+
+			if ((addr.ip_address == ip) && (addr.ip_port == port))
+				exists = true
+			end
+		}
+
+		exists
+	end
+
+	# TODO: Make this one shot and at each processing of timer register a new one
+	# If tracker fails and we have peers, try again in 30 minutes.
+	# If no peers, try every five minutes. And if we're told status is stopped, don't renew the timer
+	# Stop returning on a bad response
+	#
+	def ping_tracker
+		response = @tracker.ping({Tracker::UPLOADED => @uploaded, Tracker::DOWNLOADED => @downloaded, 
 			Tracker::LEFT => (@storage.overall_bytes - @storage.current_bytes),
-			Tracker::EVENT => Tracker::STATUS_STARTED})
+			Tracker::EVENT => @tracker_status})
 
-		puts response
+		if (@tracker_status == Tracker::STATUS_STOPPED)
+			# There will be no more updates
+			return
+		end
 
-		if (response.code == 200)
-			puts "Good - sharing: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}"
-			puts "#{@metainfo.info.directory}"
-			puts "I am #{@client_details.peer_id}"
+		@tracker_status = Tracker::STATUS_UPDATE
 
+		if (response.code != 200)
+			COLLECTOR_LOGGER.warn("Tracker update failed: #{response}")
+		else
 			tr = Tracker::AnnounceResponse.new(response.body)
+
+			@tracker_interval = tr.interval
 
 			puts tr
 
@@ -223,30 +244,51 @@ class Collector
 				my_addresses = Socket.ip_address_list.map { |addr| addr.ip_address}
 
 				tr.peers.each { |peer|
-					if (! ((my_addresses.include?(peer.ip.ip_address) && (peer.port == @client_details.port))))
+					if ((! ((my_addresses.include?(peer.ip.ip_address) && (peer.port == @client_details.port)))) &&
+						(! peer_connected?(peer.ip.ip_address, peer.port)))
 						update(Peer.new(peer.id, peer.ip.ip_address, peer.port))
 					end
 				}
 			end			
+		end
 
-			@tracker_timer = @scheduler.add { |timers| timers.every(tr.interval) {
+		if (@tracker_interval != -1)
+			TRACKER_LOGGER.debug("Tracker will next be pinged @ #{@tracker_interval}")
+
+			@tracker_timer = @scheduler.add { |timers| timers.after(@tracker_interval) {
 				update(UpdateTracker.new)
 			}}
-
 		else
-			puts "Bad #{response.code}"
-			return
+			TRACKER_LOGGER.debug("Tracker will next be pinged @ 300")
+
+			@tracker_timer = @scheduler.add { |timers| timers.after(300) {
+				update(UpdateTracker.new)
+			}}
 		end
+	end
+
+	def run
+		Thread.current.abort_on_exception = true
+
+		puts "Sharing: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}"
+		puts "#{@metainfo.info.directory}"
+		puts "I am #{@client_details.peer_id}"
+
+		@tracker_timer = @scheduler.add { |timers| timers.after(5) {
+			update(UpdateTracker.new)
+		}}
 
 		@choke_timer = @scheduler.add { |timers| timers.every(10) {
 			update(@choker)
-			}}
+		}}		
 
 		until terminate? do
 			process(@queue.deq)			
 		end
 
-		ping_tracker(Tracker::STATUS_STOPPED)
+		@tracker_timer.cancel
+		@tracker_status = Tracker::STATUS_STOPPED
+		ping_tracker
 	end
 
 	def process(message)
@@ -281,7 +323,7 @@ class Collector
 			@choker.run(@pool, @storage.complete?)
 
 		when UpdateTracker
-			ping_tracker(message.status)
+			ping_tracker
 
 		when ChokePeer
 			message.connection.metadata { |meta| meta[PEER_CHOKED] = true }
@@ -294,35 +336,23 @@ class Collector
 
 		when Peer
 			begin
-				exists = false
+				socket = TCPSocket.new(message.ip, message.port)
 
-				@pool.each { |conn|
-					addr = conn.remote_address
-
-					if ((addr.ip_address == message.ip) && (addr.ip_port == message.port))
-						exists = true
-					end
+				conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+				conn.metadata { |meta| 
+					meta[MODE] = CLIENT
+					meta[AM_CHOKED] = true
+					meta[AM_INTERESTED] = false
+					meta[PEER_CHOKED] = true
+					meta[PEER_INTERESTED] = false
+					meta[ACTIVE_REQUESTS] = []
+					meta[UPLOADED] = 0
+					meta[DOWNLOADED] = 0
 				}
 
-				if (! exists)
-					socket = TCPSocket.new(message.ip, message.port)
-
-					conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
-					conn.metadata { |meta| 
-						meta[MODE] = CLIENT
-						meta[AM_CHOKED] = true
-						meta[AM_INTERESTED] = false
-						meta[PEER_CHOKED] = true
-						meta[PEER_INTERESTED] = false
-						meta[ACTIVE_REQUESTS] = []
-						meta[UPLOADED] = 0
-						meta[DOWNLOADED] = 0
-					}
-
-					conn.add_observer(self)
-					@pool.add(conn)
-					conn.start
-				end
+				conn.add_observer(self)
+				@pool.add(conn)
+				conn.start
 
 			rescue => e
 				COLLECTOR_LOGGER.warn("Failed to connect #{message.ip} #{message.port} #{e.message} #{e.backtrace}")
@@ -441,7 +471,7 @@ class Collector
 			piece = message.piece
 
 			if (@storage.complete?)
-				update(UpdateTracker.new(Tracker::STATUS_COMPLETED))
+				@tracker_status = Tracker::STATUS_COMPLETED
 
 				COLLECTOR_LOGGER.info("Download completed")
 			end
@@ -646,17 +676,6 @@ class Collector
 		conn.send(Request.new.implode(piece, range[0], range[1]))
 	end
 
-	def ping_tracker(event)
-		response = @tracker.ping({Tracker::UPLOADED => @uploaded, Tracker::DOWNLOADED => @downloaded, 
-			Tracker::LEFT => (@storage.overall_bytes - @storage.current_bytes),
-			Tracker::NO_PEER_ID => "",
-			Tracker::EVENT => event})
-
-		if (response.code != 200)
-			COLLECTOR_LOGGER.warn("Tracker update failed: #{response}")
-		end	
-	end
-
 	class Peer
 		attr_reader :id, :ip, :port
 
@@ -672,11 +691,6 @@ class Collector
 	end
 
 	class UpdateTracker
-		attr_reader :status
-
-		def initialize(status = Tracker::STATUS_UPDATE)
-			@status = status
-		end
 	end
 
 	class PieceReady
