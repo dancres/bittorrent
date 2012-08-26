@@ -18,6 +18,17 @@ class Picker
 		(0...size).each { | p | @piece_freq[p] = 0 }
 	end
 
+	# Announces a peer acquired a piece
+	#
+	def have(piece)
+		PICKER_LOGGER.info("Have: #{piece}")
+
+		count = @piece_freq[piece]
+		count += 1
+
+		@piece_freq[piece] = count
+	end
+
 	# Announces to Picker the loss of an available client's bitmap
 	#
 	def unavailable(bitmap)
