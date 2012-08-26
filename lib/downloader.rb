@@ -421,6 +421,7 @@ class Collector
 			end
 
 			b.set(message.index)
+			@picker.have(message.index)
 
 			if (! conn.metadata { |meta| meta[AM_INTERESTED] })
 				if (b.and(@storage.needed).nonZero)
