@@ -154,7 +154,11 @@ class Collector
 	DOWNLOADED = 12
 	UPLOADED = 13
 	ACTIVE_REQUESTS	= 14
-	CHOKE_TIMESTAMP = 15
+	AM_CHOKED_TIMESTAMP = 15
+	OPTIMISTIC = 16
+	PEER_CHOKED_TIMESTAMP = 17
+	AM_UNCHOKED_TIMESTAMP = 18
+	PEER_UNCHOKED_TIMESTAMP = 19
 
 	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, client_details)
 		@metainfo = metainfo
@@ -310,18 +314,27 @@ class Collector
 			return
 
 		when ChokeAlgo
-			@choker.run(@pool, @storage.complete?)
+			@choker.run(@pool, @storage.complete?, @scheduler.current_time_millis)
 
 		when UpdateTracker
 			ping_tracker
 
 		when ChokePeer
-			message.connection.metadata { |meta| meta[PEER_CHOKED] = true }
+			message.connection.metadata { |meta| 
+				meta[PEER_CHOKED] = true
+				meta[PEER_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
+				meta[ACTIVE_REQUESTS] = []				
+			}
+
 			message.connection.send(Choke.new.implode)
-			message.connection.metadata { |meta| meta[ACTIVE_REQUESTS] = [] }
 
 		when UnchokePeer
-			message.connection.metadata { |meta| meta[PEER_CHOKED] = false }
+			message.connection.metadata { |meta| 
+				meta[PEER_CHOKED] = false
+				meta[PEER_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
+				meta[UPLOADED] = 0
+			}
+
 			message.connection.send(Unchoke.new.implode)
 
 		when Peer
@@ -332,8 +345,12 @@ class Collector
 				conn.metadata { |meta| 
 					meta[MODE] = CLIENT
 					meta[AM_CHOKED] = true
+					meta[AM_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
+					meta[AM_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
 					meta[AM_INTERESTED] = false
 					meta[PEER_CHOKED] = true
+					meta[PEER_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
+					meta[PEER_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
 					meta[PEER_INTERESTED] = false
 					meta[ACTIVE_REQUESTS] = []
 					meta[UPLOADED] = 0
@@ -353,8 +370,12 @@ class Collector
 			conn.metadata { |meta| 
 				meta[MODE] = SERVER
 				meta[AM_CHOKED] = true
+				meta[AM_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
+				meta[AM_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
 				meta[AM_INTERESTED] = false
 				meta[PEER_CHOKED] = true
+				meta[PEER_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
+				meta[PEER_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
 				meta[PEER_INTERESTED] = false
 				meta[ACTIVE_REQUESTS] = []
 				meta[UPLOADED] = 0
@@ -434,14 +455,20 @@ class Collector
 
 		when Choke
 			conn = message.connection
-			conn.metadata { |meta| meta[AM_CHOKED] = true }
-			conn.metadata { |meta| meta[CHOKE_TIMESTAMP] = @scheduler.current_time_millis }
+			conn.metadata { |meta| 
+				meta[AM_CHOKED] = true
+				meta[AM_CHOKED_TIMESTAMP] = @scheduler.current_time_millis 
+			}
 
 			clear_requests(conn)
 
 		when Unchoke
 			conn = message.connection
-			conn.metadata { |meta| meta[AM_CHOKED] = false }
+			conn.metadata { |meta| 
+				meta[AM_CHOKED] = false
+				meta[AM_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis 
+				meta[DOWNLOADED] = 0
+			}
 
 			start_streaming(conn)
 
@@ -723,13 +750,30 @@ class Collector
 		end
 	end
 
+=begin
+
+Reciprocation and number of uploads capping is managed by unchoking the four peers which have the best upload rate
+and are interested. This maximizes the client's download rate. These four peers are referred to as downloaders,
+because they are interested in downloading from the client.
+
+Peers which have a better upload rate (as compared to the downloaders) but aren't interested get unchoked. If they
+become interested, the downloader with the worst upload rate gets choked. If a client has a complete file, it uses
+its upload rate rather than its download rate to decide which peers to unchoke.
+
+For optimistic unchoking, at any one time there is a single peer which is unchoked regardless of its upload rate 
+(if interested, it counts as one of the four allowed downloaders). Which peer is optimistically unchoked rotates 
+every 30 seconds. Newly connected peers are three times as likely to start as the current optimistic unchoke as 
+anywhere else in the rotation. This gives them a decent chance of getting a complete piece to upload.
+
+=end
+
 	class ChokeAlgo		
 		def initialize(collector)
 			@collector = collector
 			@quantum = 0
 		end
 
-		def run(pool, complete)
+		def run(pool, complete, time_now)
 
 			CHOKER_LOGGER.debug("Choke::run #{pool} #{complete}")
 
@@ -739,23 +783,31 @@ class Collector
 				down = conn.metadata { |meta| meta[DOWNLOADED] }
 				pchoked = conn.metadata { |meta| meta[PEER_CHOKED] }
 				achoked = conn.metadata { |meta| meta[AM_CHOKED] }
-				time_choked = conn.metadata { |meta| meta[CHOKE_TIMESTAMP] }
+				time_choked = conn.metadata { |meta| meta[AM_CHOKED_TIMESTAMP] }
+				time_unchoked = conn.metadata { |meta| meta[AM_UNCHOKED_TIMESTAMP] }
+				peer_choked = conn.metadata { |meta| meta[PEER_CHOKED_TIMESTAMP] }
+				peer_unchoked = conn.metadata { |meta| meta[PEER_UNCHOKED_TIMESTAMP] }
 
-				CHOKER_LOGGER.debug("Conn: #{conn} #{down} #{up} #{pchoked} #{achoked} #{time_choked}")
+				CHOKER_LOGGER.debug("#{conn} #{down} #{up} #{pchoked} #{achoked} #{time_choked} #{time_unchoked} #{peer_choked} #{peer_unchoked}")
 			}			
 
 			@quantum +=1
-
 			rated = SortedSet.new
-			pool.each { |conn| rated << ConnectionComparator.new(conn, (complete) ? Collector::UPLOADED : Collector::DOWNLOADED) }
+			pool.each { |conn| rated << ConnectionComparator.new(conn, 
+				(complete) ? Collector::UPLOADED : Collector::DOWNLOADED,
+				(complete) ? Collector::PEER_UNCHOKED_TIMESTAMP : Collector::AM_UNCHOKED_TIMESTAMP,
+				time_now)
+			}
 
 			uninterested = []
 			interested = []
+			optimistic = nil
 
 			rated.each { | c | 
+				if (c.connection.metadata { |meta| meta[OPTIMISTIC] })
+					optimistic = c.connection
+				end
 
-				# Once we've found our first interested, there can be no more uninterested peers
-				#
 				if (c.connection.metadata { |meta| meta[PEER_INTERESTED] })
 					interested << c.connection
 				else
@@ -765,27 +817,40 @@ class Collector
 
 			CHOKER_LOGGER.debug("Rated: #{rated} Interested: #{interested} Uninterested: #{uninterested}")
 
+			top_interested = interested.slice!(0, 4)
+			top_uninterested = uninterested.slice!(0, 4)
+			remaining = interested + uninterested
+
+			CHOKER_LOGGER.debug("Selected: #{rated} Interested: #{top_interested} Uninterested: #{top_uninterested}")
+
 			if (@quantum == 3)
 				@quantum = 0
-				if (interested.length > 3)
-					interested = interested.slice!(0, 3) << interested[ Random.new.rand(interested.length) ]
-				else
-					interested = interested.slice(0, 3)
+
+				if (optimistic != nil)
+					optimistic.metadata { |meta| meta[OPTIMISTIC] = false }
 				end
-			else
-				interested = interested.slice(0, 3)
+
+				if (remaining.length > 0)
+					optimistic = remaining[ Random.new.rand(remaining.length) ]
+					optimistic.metadata { |meta| meta[OPTIMISTIC] = true }
+
+					remaining.delete(optimistic)
+				end
 			end
 
-			uninterested = uninterested.slice(0, 3)
-
-			CHOKER_LOGGER.debug("Chosen - Interested: #{interested} Uninterested: #{uninterested}")
-			rated.each { | c | 
-				if ((! interested.include?(c.connection)) && (! uninterested.include?(c.connection)))
-					choke(c.connection)
+			if ((optimistic != nil) && (! top_interested.include?(optimistic)) && (! top_uninterested.include?(optimistic)))
+				if (optimistic.metadata { |meta| meta[PEER_INTERESTED] })
+					top_interested = top_interested.slice(0, 3) << optimistic
 				else
-					unchoke(c.connection)
-				end
-			}
+					top_uninterested = top_uninterested.slice(0, 3) << optimistic						
+				end					
+			end
+
+			CHOKER_LOGGER.debug("Chosen - Interested: #{top_interested} Uninterested: #{top_uninterested} Remaining: #{remaining}")
+
+			top_interested.each { |c| unchoke(c) }
+			top_uninterested.each { |c| unchoke(c) }
+			remaining.each { |c| choke(c) }
 		end
 
 		def choke(c)
@@ -809,14 +874,19 @@ class Collector
 
 			attr_reader :connection
 
-			def initialize(conn, field)
+			def initialize(conn, count_field, time_field, current_time)
 				@connection = conn
-				@field = field
+				@count_field = count_field
+				@time_field = time_field
+				@current_time = current_time
 			end
 
 			def <=>(another_comparator)
-				mine = connection.metadata { |meta| meta[@field] }
-				other = another_comparator.connection.metadata { |meta| meta[@field] }
+				mine = connection.metadata { |meta| meta[@count_field] } / 
+					(@current_time - connection.metadata { |meta| meta[@time_field] }).to_f
+
+				other = another_comparator.connection.metadata { |meta| meta[@count_field] } / 
+					(@current_time - another_comparator.connection.metadata { |meta| meta[@time_field] }).to_f
 
 				if (mine < other)
 					-1
