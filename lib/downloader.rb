@@ -156,9 +156,12 @@ class Collector
 	ACTIVE_REQUESTS	= 14
 	AM_CHOKED_TIMESTAMP = 15
 	OPTIMISTIC = 16
-	PEER_CHOKED_TIMESTAMP = 17
 	AM_UNCHOKED_TIMESTAMP = 18
 	PEER_UNCHOKED_TIMESTAMP = 19
+	NOT_SET = 20
+
+	SNUB_TIME = 60000	
+	OPTIMISTIC_THRESHOLD = 3
 
 	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, client_details)
 		@metainfo = metainfo
@@ -175,7 +178,7 @@ class Collector
 		@storage = storage
 		@tracker = tracker
 		@tracker_status = Tracker::STATUS_STARTED
-		@tracker_interval = -1
+		@tracker_interval = NOT_SET
 		@picker = Picker.new(@metainfo.info.pieces.pieces.length)
 		@uploaded = 0
 		@downloaded = 0		
@@ -256,7 +259,7 @@ class Collector
 			end			
 		end
 
-		if (@tracker_interval != -1)
+		if (@tracker_interval != NOT_SET)
 			TRACKER_LOGGER.debug("Tracker will next be pinged @ #{@tracker_interval}")
 
 			@tracker_timer = @scheduler.add { |timers| timers.after(@tracker_interval) {
@@ -322,7 +325,6 @@ class Collector
 		when ChokePeer
 			message.connection.metadata { |meta| 
 				meta[PEER_CHOKED] = true
-				meta[PEER_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
 				meta[ACTIVE_REQUESTS] = []				
 			}
 
@@ -345,11 +347,10 @@ class Collector
 				conn.metadata { |meta| 
 					meta[MODE] = CLIENT
 					meta[AM_CHOKED] = true
-					meta[AM_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
+					meta[AM_CHOKED_TIMESTAMP] = NOT_SET
 					meta[AM_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
 					meta[AM_INTERESTED] = false
 					meta[PEER_CHOKED] = true
-					meta[PEER_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
 					meta[PEER_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
 					meta[PEER_INTERESTED] = false
 					meta[ACTIVE_REQUESTS] = []
@@ -370,11 +371,10 @@ class Collector
 			conn.metadata { |meta| 
 				meta[MODE] = SERVER
 				meta[AM_CHOKED] = true
-				meta[AM_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
+				meta[AM_CHOKED_TIMESTAMP] = NOT_SET
 				meta[AM_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
 				meta[AM_INTERESTED] = false
 				meta[PEER_CHOKED] = true
-				meta[PEER_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
 				meta[PEER_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis
 				meta[PEER_INTERESTED] = false
 				meta[ACTIVE_REQUESTS] = []
@@ -457,7 +457,12 @@ class Collector
 			conn = message.connection
 			conn.metadata { |meta| 
 				meta[AM_CHOKED] = true
-				meta[AM_CHOKED_TIMESTAMP] = @scheduler.current_time_millis 
+
+				# Possibly we're being snubbed - we'll know in 60 seconds.
+				#
+				if (meta[AM_INTERESTED] == true)
+					meta[AM_CHOKED_TIMESTAMP] = @scheduler.current_time_millis
+				end
 			}
 
 			clear_requests(conn)
@@ -467,6 +472,7 @@ class Collector
 			conn.metadata { |meta| 
 				meta[AM_CHOKED] = false
 				meta[AM_UNCHOKED_TIMESTAMP] = @scheduler.current_time_millis 
+				meta[AM_CHOKED_TIMESTAMP] = NOT_SET
 				meta[DOWNLOADED] = 0
 			}
 
@@ -509,8 +515,17 @@ class Collector
 					# of available is required.
 					#
 					if (c.metadata { |meta| meta[AM_INTERESTED] })
+						COLLECTOR_LOGGER.debug("Am currently interested #{@storage.complete?} #{(! available.and(outstanding).nonZero)}")
+
 						if ((@storage.complete?) || (! available.and(outstanding).nonZero))
-							c.metadata { |meta| meta[AM_INTERESTED] = false }
+
+							COLLECTOR_LOGGER.debug("Showing no more interest")
+
+							c.metadata { |meta| 
+								meta[AM_INTERESTED] = false
+								meta[AM_CHOKED_TIMESTAMP] = NOT_SET
+							}
+
 							c.send(NotInterested.new.implode)
 						end
 					end
@@ -783,12 +798,12 @@ anywhere else in the rotation. This gives them a decent chance of getting a comp
 				down = conn.metadata { |meta| meta[DOWNLOADED] }
 				pchoked = conn.metadata { |meta| meta[PEER_CHOKED] }
 				achoked = conn.metadata { |meta| meta[AM_CHOKED] }
+				interested = conn.metadata { |meta| meta[AM_INTERESTED] }
 				time_choked = conn.metadata { |meta| meta[AM_CHOKED_TIMESTAMP] }
 				time_unchoked = conn.metadata { |meta| meta[AM_UNCHOKED_TIMESTAMP] }
-				peer_choked = conn.metadata { |meta| meta[PEER_CHOKED_TIMESTAMP] }
 				peer_unchoked = conn.metadata { |meta| meta[PEER_UNCHOKED_TIMESTAMP] }
 
-				CHOKER_LOGGER.debug("#{conn} #{down} #{up} #{pchoked} #{achoked} #{time_choked} #{time_unchoked} #{peer_choked} #{peer_unchoked}")
+				CHOKER_LOGGER.debug("#{conn} #{down} #{up} #{pchoked} #{achoked} #{interested} #{time_choked} #{time_unchoked} #{peer_unchoked}")
 			}			
 
 			@quantum +=1
@@ -801,6 +816,7 @@ anywhere else in the rotation. This gives them a decent chance of getting a comp
 
 			uninterested = []
 			interested = []
+			snubbed = []
 			optimistic = nil
 
 			rated.each { | c | 
@@ -808,22 +824,30 @@ anywhere else in the rotation. This gives them a decent chance of getting a comp
 					optimistic = c.connection
 				end
 
-				if (c.connection.metadata { |meta| meta[PEER_INTERESTED] })
-					interested << c.connection
+				choked_timestamp = c.connection.metadata { |meta| meta[AM_CHOKED_TIMESTAMP] }
+
+				# Have we been snubbed?
+				#
+				if ((choked_timestamp == NOT_SET) || ((time_now - choked_timestamp) < SNUB_TIME))
+					if (c.connection.metadata { |meta| meta[PEER_INTERESTED] })
+						interested << c.connection
+					else
+						uninterested << c.connection
+					end
 				else
-					uninterested << c.connection
+					snubbed << c.connection
 				end
 			}
 
-			CHOKER_LOGGER.debug("Rated: #{rated} Interested: #{interested} Uninterested: #{uninterested}")
+			CHOKER_LOGGER.debug("Rated: #{rated} Interested: #{interested} Uninterested: #{uninterested} Snubbed: #{snubbed}")
 
 			top_interested = interested.slice!(0, 4)
 			top_uninterested = uninterested.slice!(0, 4)
-			remaining = interested + uninterested
+			remaining = interested + uninterested + snubbed
 
-			CHOKER_LOGGER.debug("Selected: #{rated} Interested: #{top_interested} Uninterested: #{top_uninterested}")
+			CHOKER_LOGGER.debug("Selected: Interested: #{top_interested} Uninterested: #{top_uninterested}")
 
-			if (@quantum == 3)
+			if (@quantum == OPTIMISTIC_THRESHOLD)
 				@quantum = 0
 
 				if (optimistic != nil)
@@ -835,6 +859,8 @@ anywhere else in the rotation. This gives them a decent chance of getting a comp
 					optimistic.metadata { |meta| meta[OPTIMISTIC] = true }
 
 					remaining.delete(optimistic)
+
+					CHOKER_LOGGER.debug("Picked an optimistic: #{optimistic}")
 				end
 			end
 
