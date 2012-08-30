@@ -50,10 +50,15 @@ TODO:
 
 Fast extensions and others
 
-Snubbing - if the peer is interested in a remote peer and that remote peer has left this peer choked for more than
-60 seconds, mark it snubbed and choke it. The choke algorithm should then not admit this peer to unchoking unless
-it is selected via the random unchoke. Snubbing is disabled when the remote peer unchokes this peer or when
-it is explicitly unchoked via the random unchoke mentioned above.
+Request pipelining
+
+Once we're complete, there is no point in leaving open connections from seeds as they won't ask us for
+anything nor will we talk to them. In fact we might want to track which peers have the most stuff we're
+interested in and drop others...
+
+Multi-torrent support - should be able to multiplex on the same socket so long as use the info_hash in the
+handshake to identify the downloader to associate with the connection. We'll also need to consider connection
+pooling ratios etc.
 
 Chain of Responsibility
 =======================
@@ -495,12 +500,6 @@ class Collector
 			conn = message.connection
 			piece = message.piece
 
-			if (@storage.complete?)
-				@tracker_status = Tracker::STATUS_COMPLETED
-
-				COLLECTOR_LOGGER.info("Download completed")
-			end
-
 			if (message.success)
 
 				# Send out not interested to anyone that can't supply us, also update our AM_INTERESTED
@@ -540,6 +539,20 @@ class Collector
 				}
 			else
 				COLLECTOR_LOGGER.warn("Failed piece #{piece} on #{conn}")
+			end
+
+			if (@storage.complete?)
+				@tracker_status = Tracker::STATUS_COMPLETED
+
+				COLLECTOR_LOGGER.info("Download completed")
+
+				# Any connections we used purely to download can be closed
+				#
+				to_close = @pool.reject { |conn| conn.metadata { |meta| meta[MODE] } != CLIENT }
+				to_close.each { |conn| 
+					conn.close
+					@pool.remove(conn)
+				}
 			end
 
 			clear_requests(conn)
