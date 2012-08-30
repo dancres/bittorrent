@@ -615,7 +615,6 @@ class Collector
 
 			if (conn.metadata { |meta| meta[PEER_CHOKED] })
 				COLLECTOR_LOGGER.warn("Dropping message from choked peer #{conn}")
-				raise "Consistency problem"
 			else
 				# Record the request
 				conn.metadata { | meta | meta[ACTIVE_REQUESTS] << [message.index, message.start] 
