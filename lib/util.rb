@@ -48,6 +48,8 @@ class Scheduler
 end
 
 class Pool
+	include Enumerable
+
 	def initialize
 		@pool = Set.new
 		@lock = Mutex.new
