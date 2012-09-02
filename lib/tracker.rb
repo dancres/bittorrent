@@ -24,22 +24,22 @@ class Tracker
   EVENT = :event
   NUMWANT = :numwant
   
-  attr_reader :tracker, :info_hash, :client_details
+  attr_reader :tracker_url, :info_hash
   
-  def initialize(tracker, info_hash, client_details)
-    @tracker = tracker
+  def initialize(tracker_url, info_hash, core)
+    @tracker_url = tracker_url
     @info_hash = info_hash
-    @client_details = client_details
+    @core = core
     RestClient.log = TRACKER_LOGGER
   end  
   
   def ping(param_map)
-    http_get(tracker, "", param_map.merge({INFO_HASH => info_hash, PEER_ID => client_details.peer_id, 
-      PORT => client_details.port}))
+    http_get(tracker_url, "", param_map.merge({INFO_HASH => info_hash, PEER_ID => @core.peer_id, 
+      PORT => @core.port}))
   end
   
   def http_get(domain,path,params)
-      URI.parse(tracker + path + "?".concat(params.collect { |k,v| "#{k}=#{CGI::escape(v.to_s)}" }.join('&')))
+      URI.parse(tracker_url + path + "?".concat(params.collect { |k,v| "#{k}=#{CGI::escape(v.to_s)}" }.join('&')))
       
       begin
         RestClient.get "#{domain}#{path}", {:params => params}

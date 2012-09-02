@@ -11,16 +11,15 @@ require_relative '../configure/environment.rb'
 
 class Downloader
 
-	def initialize(storage, metainfo, tracker, client_details)
+	def initialize(storage, metainfo, tracker, core)
 		@meta = metainfo
 		@tracker = tracker
-		@client_details = client_details
-		@core = Core.new(client_details)
+		@core = core
 		@storage = storage
 	end
 
 	def run
-		collector = Collector.new(@core.scheduler, @core.selector, @core.pool, @storage, @tracker, @meta, @client_details)
+		collector = Collector.new(@core.scheduler, @core.selector, @core.pool, @storage, @tracker, @meta, @core)
 		@core.accept_handler.add_observer(collector)
 		@core.accept_handler.start
 
@@ -29,24 +28,30 @@ class Downloader
 end
 
 class Core
-	attr_reader :selector, :serversocket, :accept_handler, :client_details, :scheduler, :pool
+	attr_reader :selector, :serversocket, :accept_handler, :scheduler, :pool, :port, :peer_id
 
-	def initialize(client_details)
+	def initialize(port)
 		@selector = Selector.new
-		@client_details = client_details
-		@serversocket = TCPServer.new(client_details.port)
+		@port = port
+		@serversocket = TCPServer.new(port)
 		@accept_handler = Acceptor.new(@selector, @serversocket)
 		@scheduler = Scheduler.new
 		@pool = Pool.new
+		time = (Time.now.to_f * 1000).to_i.to_s.reverse
+		@peer_id = "DC0001-#{time}".slice(0, 20).ljust(20, "-")		
 	end
 
 	def terminate
+		@selector.terminate
+		@scheduler.terminate
 	end
 end
 
 =begin
 
 TODO:
+
+Needs to be a gem
 
 Fast extensions and others
 
@@ -168,7 +173,7 @@ class Collector
 	SNUB_TIME = 60000	
 	OPTIMISTIC_THRESHOLD = 3
 
-	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, client_details)
+	def initialize(scheduler, selector, connection_pool, storage, tracker, metainfo, core)
 		@metainfo = metainfo
 		@scheduler = scheduler
 		@tracker_timer = nil
@@ -176,7 +181,7 @@ class Collector
 		@choker = ChokeAlgo.new(self)
 		@selector = selector
 		@pool = connection_pool
-		@client_details = client_details
+		@core = core
 		@lock = Mutex.new
 		@terminate = false
 		@queue = Queue.new
@@ -256,7 +261,7 @@ class Collector
 				my_addresses = Socket.ip_address_list.map { |addr| addr.ip_address}
 
 				tr.peers.each { |peer|
-					if ((! ((my_addresses.include?(peer.ip.ip_address) && (peer.port == @client_details.port)))) &&
+					if ((! ((my_addresses.include?(peer.ip.ip_address) && (peer.port == @core.port)))) &&
 						(! peer_connected?(peer.ip.ip_address, peer.port)))
 						update(Peer.new(peer.id, peer.ip.ip_address, peer.port))
 					end
@@ -284,7 +289,7 @@ class Collector
 
 		COLLECTOR_LOGGER.info("Sharing: #{@metainfo.info.sha1_hash.unpack("H*")} #{@metainfo.info.pieces.pieces.length} pieces of length #{@metainfo.info.pieces.piece_length}")
 		COLLECTOR_LOGGER.info("#{@metainfo.info.directory}")
-		COLLECTOR_LOGGER.info("I am #{@client_details.peer_id}")
+		COLLECTOR_LOGGER.info("I am #{@core.peer_id}")
 
 		@tracker_timer = @scheduler.add { |timers| timers.after(5) {
 			update(UpdateTracker.new)
@@ -348,7 +353,7 @@ class Collector
 			begin
 				socket = TCPSocket.new(message.ip, message.port)
 
-				conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+				conn = Connection.new(socket, Connection::SEND_HANDSHAKE, @metainfo.info.sha1_hash, @selector, @core.peer_id)
 				conn.metadata { |meta| 
 					meta[MODE] = CLIENT
 					meta[AM_CHOKED] = true
@@ -372,7 +377,7 @@ class Collector
 			end
 
 		when Client
-			conn = Connection.new(message.socket, Connection::HANDSHAKE_WAIT, @metainfo.info.sha1_hash, @selector, @client_details.peer_id)
+			conn = Connection.new(message.socket, Connection::HANDSHAKE_WAIT, @metainfo.info.sha1_hash, @selector, @core.peer_id)
 			conn.metadata { |meta| 
 				meta[MODE] = SERVER
 				meta[AM_CHOKED] = true
