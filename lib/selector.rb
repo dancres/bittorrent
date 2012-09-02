@@ -122,7 +122,7 @@ class Selector
 			}
 
 			begin
-				readers, writers, errors = IO.select(readers, writers, errors, 0.1)
+				readers, writers, errors = IO.select(readers, writers, errors, 0.02)
 
 				readers.each { |io| @handlers[io].read } unless (readers == nil)
 
